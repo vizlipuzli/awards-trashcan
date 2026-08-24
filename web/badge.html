@@ -44,6 +44,16 @@
   .sw span { position: absolute; left: -2px; right: -2px; bottom: -13px; text-align: center; font-size: 8px;
     color: var(--dim); letter-spacing: .04em; overflow: hidden; }
 
+  #artbox { border: 1px solid var(--line); border-radius: 3px; background: #fff;
+    overflow: hidden; min-height: 60px; display: grid; place-items: center; }
+  #artbox img { display: block; width: 100%; height: auto; }
+  #artbox.over { outline: 2px dashed #7bd45f; outline-offset: -3px; }
+  .cap { color: var(--dim); margin: 5px 0 0; }
+  .cap b { color: #7bd45f; font-weight: 400; }
+  .warn { color: #d8a33a; }
+  label.file { display: block; text-align: center; }
+  label.file input { display: none; }
+
   #note { color: var(--dim); margin: 6px 0 0; }
   #note b { color: #7bd45f; font-weight: 400; }
   textarea { width: 100%; height: 130px; background: #121a12; color: var(--ink); border: 1px solid var(--line);
@@ -163,9 +173,38 @@ composer.addPass(new OutputPass());
  *  Разбор картинки. suggest даёт два числа, которые нельзя выбирать
  *  на вкус — они свойства рисунка: толщина штриха и предел ширины канта.
  * ------------------------------------------------------------------ */
-const img = new Image();
-img.src = `./badges/${S.art}`;
-await img.decode().catch(() => fail(`не читается ./badges/${S.art}`));
+const ART_KEY = `${KEY}:art`;
+let img = new Image(), artNote = '';
+
+async function setImage(src) {
+  const next = new Image();
+  next.src = src;
+  await next.decode();
+  img = next;
+}
+
+let stored = null;
+try { stored = localStorage.getItem(ART_KEY); } catch {}
+await setImage(stored || `./badges/${S.art}`)
+  .catch(() => fail(`не читается ./badges/${S.art}`));
+if (stored) artNote = 'картинка из браузера';
+
+/* Новый рисунок — другие области и другая толщина штриха, поэтому
+   раскладка цветов и всё, что было измерено по прежней картинке,
+   сбрасывается: иначе цвета лягут наугад, а фаска останется от чужого
+   штриха и вывернет геометрию. */
+async function useImage(src, fileName) {
+  try { await setImage(src); } catch { artNote = 'файл не читается как картинка'; refreshPanel(); return; }
+  try { localStorage.setItem(ART_KEY, src); artNote = ''; }
+  catch { artNote = 'не помещается в память браузера — пропадёт при перезагрузке'; }
+  if (fileName) S.art = fileName;
+  S.regions = {};
+  if (S.relief?.bevel) delete S.relief.bevel.fence;
+  if (S.relief) delete S.relief.minWall;
+  if (S.band) { delete S.band.width; delete S.band.inset; }
+  camera.userData.placed = false;
+  traceArt(); build(); refreshPanel(); save();
+}
 
 let art, unit, silhouette, regions, suggest;
 
@@ -430,8 +469,42 @@ function control([path, label, min, max, step, level, kind]) {
   return row;
 }
 
+const artImg = document.createElement('img');
+const artBox = document.createElement('div'); artBox.id = 'artbox'; artBox.append(artImg);
+artBox.addEventListener('dragover', e => { e.preventDefault(); artBox.classList.add('over'); });
+artBox.addEventListener('dragleave', () => artBox.classList.remove('over'));
+artBox.addEventListener('drop', e => {
+  e.preventDefault(); artBox.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f) readFile(f);
+});
+function readFile(f) {
+  const fr = new FileReader();
+  fr.onload = () => useImage(fr.result, f.name);
+  fr.readAsDataURL(f);
+}
+
 function buildPanel() {
   panel.textContent = '';
+
+  const hi = document.createElement('h2'); hi.textContent = 'Контур'; panel.append(hi);
+  artImg.src = img.src;
+  panel.append(artBox);
+
+  const pick = document.createElement('label'); pick.className = 'file';
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = () => { if (inp.files[0]) readFile(inp.files[0]); };
+  const btn = document.createElement('button'); btn.textContent = 'загрузить рисунок';
+  btn.onclick = e => { e.preventDefault(); inp.click(); };
+  pick.append(inp, btn);
+  const bi = document.createElement('div'); bi.className = 'bar one'; bi.append(pick);
+  panel.append(bi);
+
+  const cap = document.createElement('div'); cap.className = 'cap';
+  cap.innerHTML = `<b>${S.art}</b> · ${img.naturalWidth}\u00d7${img.naturalHeight}` +
+    (artNote ? `<br><span class="warn">${artNote}</span>` : '') +
+    `<br>можно перетащить файл сюда. рисунок живёт только в браузере — чтобы значок открылся у других, положите его в badges/ рядом с json`;
+  panel.append(cap);
 
   const h0 = document.createElement('h2'); h0.textContent = 'Заливка'; panel.append(h0);
 
@@ -479,6 +552,8 @@ function buildPanel() {
   const bc = document.createElement('div'); bc.className = 'bar one'; bc.append(b3);
   panel.append(bb, bc, out);
 }
+
+function refreshPanel() { const y = panel.scrollTop; buildPanel(); panel.scrollTop = y; }
 
 /* ------------------------------------------------------------------ *
  *  Клик по области — заливка выбранным цветом
