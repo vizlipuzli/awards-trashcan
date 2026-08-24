@@ -176,68 +176,22 @@ function toShape(rings, tol, smoothing) {
   };
 }
 
-/* Дистанционное преобразование: для каждого пикселя маски — расстояние
-   до ближайшего пикселя вне её. Два прохода, веса 1 и sqrt(2). */
-function distanceMap(inside, W, H) {
-  const INF = 1e9, d = new Float32Array(W * H);
-  const A = 1, B = Math.SQRT2;
-  for (let i = 0; i < d.length; i++) d[i] = inside(i) ? INF : 0;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = y * W + x; if (!d[i]) continue;
-    let v = d[i];
-    if (x > 0)               v = Math.min(v, d[i - 1] + A);
-    if (y > 0)               v = Math.min(v, d[i - W] + A);
-    if (x > 0 && y > 0)      v = Math.min(v, d[i - W - 1] + B);
-    if (x < W - 1 && y > 0)  v = Math.min(v, d[i - W + 1] + B);
-    d[i] = v;
-  }
-  for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
-    const i = y * W + x; if (!d[i]) continue;
-    let v = d[i];
-    if (x < W - 1)                 v = Math.min(v, d[i + 1] + A);
-    if (y < H - 1)                 v = Math.min(v, d[i + W] + A);
-    if (x < W - 1 && y < H - 1)    v = Math.min(v, d[i + W + 1] + B);
-    if (x > 0 && y < H - 1)        v = Math.min(v, d[i + W - 1] + B);
-    d[i] = v;
-  }
-  return d;
-}
-
-/* Два числа, которые нельзя выбирать на вкус — они свойства рисунка.
-   ink  — толщина штриха как 2*площадь/периметр. Для полосы ширины w это
-          даёт ровно w, а сплошные пятна (залитый зрачок) занижают оценку,
-          а не завышают — что здесь и нужно. Среднее по карте расстояний
-          пробовалось и врёт вдвое именно из-за таких пятен.
-   band — предел для канта: кант шириной больше этого целиком проглотит
-          какую-нибудь значимую область. Считается как минимум по областям
-          от их максимального удаления от края силуэта. */
-function measure(lab, cells, W, H) {
-  let inkArea = 0, inkEdges = 0;
+/* Толщина штриха: 2*площадь/периметр. Для полосы ширины w это ровно w,
+   а сплошные пятна (залитый зрачок) занижают оценку, а не завышают —
+   что здесь и нужно, ошибаться безопаснее в меньшую сторону.
+   Среднее по карте расстояний пробовалось и врёт почти вдвое вверх. */
+function measure(lab, W, H) {
+  let area = 0, edges = 0;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = y * W + x;
     if (lab[i] !== -1) continue;
-    inkArea++;
-    if (x === 0     || lab[i - 1] !== -1) inkEdges++;
-    if (x === W - 1 || lab[i + 1] !== -1) inkEdges++;
-    if (y === 0     || lab[i - W] !== -1) inkEdges++;
-    if (y === H - 1 || lab[i + W] !== -1) inkEdges++;
+    area++;
+    if (x === 0     || lab[i - 1] !== -1) edges++;
+    if (x === W - 1 || lab[i + 1] !== -1) edges++;
+    if (y === 0     || lab[i - W] !== -1) edges++;
+    if (y === H - 1 || lab[i + W] !== -1) edges++;
   }
-  const ink = inkEdges ? 2 * inkArea / inkEdges : 2;
-
-  const dSil = distanceMap(i => lab[i] !== 1, W, H);
-  let silArea = 0;
-  for (let i = 0; i < lab.length; i++) if (lab[i] !== 1) silArea++;
-  const peak = new Map();
-  for (let i = 0; i < lab.length; i++) {
-    const id = lab[i];
-    if (id > 1 && dSil[i] > (peak.get(id) ?? 0)) peak.set(id, dSil[i]);
-  }
-  let band = Infinity;
-  for (const c of cells) {
-    if (c.area < silArea * 0.005) continue;        // мелочь вроде пальцев не в счёт
-    band = Math.min(band, peak.get(c.id) ?? Infinity);
-  }
-  return { ink, band: Number.isFinite(band) ? band : ink * 4 };
+  return { ink: edges ? 2 * area / edges : 2 };
 }
 
 /* Полный разбор картинки. */
@@ -254,5 +208,5 @@ export function extract(imageData, opts = {}) {
   }).filter(Boolean);
 
   regions.sort((a, b) => b.area - a.area);
-  return { width: W, height: H, silhouette, regions, dropped, suggest: measure(lab, cells, W, H) };
+  return { width: W, height: H, silhouette, regions, dropped, suggest: measure(lab, W, H) };
 }

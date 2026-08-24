@@ -190,16 +190,38 @@ function traceArt() {
 
   silhouette = [poly(art.silhouette)];
   regions = art.regions.map(poly);
-  suggest = { ink: art.suggest.ink * unit, band: art.suggest.band * unit };
+  suggest = { ink: art.suggest.ink * unit, merge: mergeLimit(silhouette) };
 
   // выведенное из рисунка подставляем только если в spec не задано
   S.relief ??= {}; S.relief.bevel ??= {};
   S.relief.bevel.fence ??= +(suggest.ink * 0.25).toFixed(4);
-  S.relief.minWall ??= +(suggest.ink * 0.6).toFixed(4);
+  S.relief.minWall ??= 0;
   if (S.band) {
-    S.band.inset ??= +(suggest.band * 0.15).toFixed(4);
-    S.band.width ??= +(suggest.band * 0.45).toFixed(4);
+    S.band.inset ??= +(suggest.ink * 0.6).toFixed(4);
+    S.band.width ??= +(suggest.merge * 0.5).toFixed(4);
   }
+}
+
+/* На сколько силуэт можно раздуть, пока соседние части не слиплись.
+   По формуле Штейнера площадь эквидистанты наружу равна A + P*d + pi*d^2,
+   пока она сама себя не перекрыла. Как только тонкий просвет между
+   частями закрывается, объединение оказывается меньше предсказанного —
+   на этом и ловим. */
+function mergeLimit(polys) {
+  const ringArea = r => Math.abs(C.area(r));
+  const per = r => { let L = 0; for (let i = 0; i < r.length; i++) {
+    const a = r[i], b = r[(i + 1) % r.length]; L += Math.hypot(b.x - a.x, b.y - a.y); } return L; };
+  const A = polys.reduce((s, p) => s + ringArea(p.outer) - p.holes.reduce((t, h) => t + ringArea(h), 0), 0);
+  const P = polys.reduce((s, p) => s + per(p.outer) + p.holes.reduce((t, h) => t + per(h), 0), 0);
+  const ok = d => {
+    const g = C.offset(polys, d);
+    const got = g.reduce((s, p) => s + ringArea(p.outer) - p.holes.reduce((t, h) => t + ringArea(h), 0), 0);
+    return got >= (A + P * d + Math.PI * d * d) * 0.985;
+  };
+  let lo = 0, hi = Math.sqrt(A) * 0.5;
+  if (ok(hi)) return hi;
+  for (let i = 0; i < 12; i++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; }
+  return lo;
 }
 
 /* ------------------------------------------------------------------ *
@@ -275,23 +297,28 @@ function build() {
     badge.add(new THREE.Mesh(geo, mat));
   };
 
-  for (const p of silhouette) solid(p, 0, zBase, R.bevel.plate, metalMat);
-
-  let field = silhouette;
+  /* Кант — ВНЕШНЯЯ обводка: силуэт рисунка остаётся его внутренней
+     границей, наружу нарастают полоса эмали и металлический край.
+     Рисунок при этом не меняется вовсе — полем для ограждения и
+     областей остаётся сам силуэт. */
+  const field = silhouette;
+  let outline = silhouette, ring = [];
   if (S.band && S.band.width > 0) {
-    const a = C.offset(silhouette, -S.band.inset);
-    const b = C.offset(silhouette, -(S.band.inset + S.band.width));
-    const mat = enamelMats[S.band.enamel] ?? metalMat;
-    for (const p of C.subtract(a, b)) badge.add(enamelMesh(p, mat));
-    field = b;
+    const grown = C.offset(silhouette, S.band.width);
+    ring = C.subtract(grown, silhouette);
+    outline = S.band.inset > 0 ? C.offset(grown, S.band.inset) : grown;
   }
 
-  const inner = C.offset(field, -R.minWall);
+  for (const p of outline) solid(p, 0, zBase, R.bevel.plate, metalMat);
+  for (const p of ring) badge.add(enamelMesh(p, enamelMats[S.band?.enamel] ?? metalMat));
+
+  const inner = R.minWall > 0 ? C.offset(field, -R.minWall) : field;
   regions.forEach((r, i) => {
     for (const piece of C.intersect([r], inner)) cells.push({ piece, index: i, mesh: null });
   });
 
-  for (const f of C.subtract(field, cells.map(c => c.piece)))
+  // ограждение: вся вырубка минус ячейки и минус полоса канта
+  for (const f of C.subtract(outline, [...cells.map(c => c.piece), ...ring]))
     solid(f, zBase, zTop, R.bevel.fence, metalMat);
 
   for (const c of cells) {
@@ -323,7 +350,7 @@ const note = document.createElement('p'); note.id = 'note';
 const status = () => {
   note.innerHTML = `областей <b>${regions.length}</b> · залито <b>${cells.filter(c => c.mesh).length}</b>` +
     ` · мелких отброшено <b>${art.dropped}</b><br>штрих из рисунка <b>${suggest.ink.toFixed(3)}</b>` +
-    ` · предел канта <b>${suggest.band.toFixed(3)}</b>`;
+    ` · части слипаются с <b>${suggest.merge.toFixed(3)}</b>`;
 };
 
 let spinning = true, angle = 0;
@@ -353,8 +380,8 @@ const CONTROLS = [
   ['relief.meniscus.width', 'ширина подъёма', 0.005, 0.2, 0.005, 'geo'],
   ['relief.meniscus.steps', 'колец', 2, 10, 1, 'geo'],
   ['Кант'],
-  ['band.inset', 'отступ от края', 0, 0.2, 0.002, 'geo'],
-  ['band.width', 'ширина', 0, 0.3, 0.002, 'geo'],
+  ['band.inset', 'металл по краю', 0, 0.2, 0.002, 'geo'],
+  ['band.width', 'ширина обводки', 0, 0.4, 0.002, 'geo'],
   ['band.enamel', 'эмаль', 0, 0, 0, 'geo', 'enamel'],
   ['Растр'],
   ['trace.threshold', 'порог чёрного', 40, 240, 1, 'trace'],
