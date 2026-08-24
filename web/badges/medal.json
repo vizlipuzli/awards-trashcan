@@ -1,0 +1,45 @@
+{
+  "name": "Медаль с лентой",
+  "art": "medal.svg",
+
+  "//scale": "ширина внешнего контура в единицах сцены; всё остальное ниже — в них же",
+  "scale": { "width": 2.30 },
+
+  "//metal": "материал и пластины, и ограждения — он один на весь значок",
+  "metal": { "color": "#e7b189", "roughness": 0.24, "envMapIntensity": 1.1 },
+
+  "relief": {
+    "plate": 0.10,
+    "//fence": "высота ограждения над пластиной",
+    "fence": 0.105,
+    "//enamelDepth": "насколько эмаль утоплена ниже верха ограждения",
+    "enamelDepth": 0.037,
+    "//tuck": "на сколько эмаль шире своего проёма — уходит под стенку, убирает совпадающие грани",
+    "tuck": 0.013,
+    "bevel": { "plate": 0.02, "fence": 0.012, "enamel": 0.006 }
+  },
+
+  "//band": "кант вокруг всего: отступ от края и ширина. В картинке его нет, он строится офсетом внешнего контура",
+  "band": { "inset": 0.04, "width": 0.145, "enamel": "cream" },
+
+  "enamels": {
+    "cream": { "color": "#eadfcd", "roughness": 0.16, "clearcoat": 1, "clearcoatRoughness": 0.05, "envMapIntensity": 0.9 },
+    "green": { "color": "#63f01c", "roughness": 0.20, "clearcoat": 1, "clearcoatRoughness": 0.05, "emissive": "#2f9c0b", "emissiveIntensity": 0.12 },
+    "black": { "color": "#0b0e06", "roughness": 0.45, "clearcoat": 0.35, "clearcoatRoughness": 0.10, "envMapIntensity": 0.25 }
+  },
+
+  "//regions": "id пути в SVG -> имя эмали. Путь, которого здесь нет, останется металлом",
+  "regions": {
+    "stripe1": "green",
+    "stripe2": "black",
+    "stripe3": "green",
+    "wedge": "black",
+    "feather1": "green",
+    "feather2": "green",
+    "ring": "black",
+    "core": "green"
+  },
+
+  "//centerpiece": "3D-фигура по центру; null — без неё",
+  "centerpiece": null
+}
