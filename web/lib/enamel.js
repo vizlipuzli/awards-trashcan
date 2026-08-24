@@ -55,14 +55,28 @@ function distanceField(rings) {
  */
 export function enamelGeometry(poly, { zBottom, zFloor, zEdge }, plan) {
   const p = orient(poly);
-  const { w, bands, scale = 1 } = plan;
-  /* Ячейка у́же двух ширин мениска стала бы куполом, поэтому подъём гасится
-     по тому, насколько её вообще удалось вдвинуть внутрь. Это и держит
-     мелочь вроде пальцев плоской. */
-  const top = w > 0 ? zFloor + (zEdge - zFloor) * scale : zFloor;
+  const { w, bands, scale = 1, dome = false } = plan;
 
-  const H  = d => { const u = w > 0 ? Math.min(1, d / w) : 1; return zFloor + (top - zFloor) * (1 - u) ** 2; };
-  const dH = d => { const u = w > 0 ? Math.min(1, d / w) : 1; return u >= 1 ? 0 : -2 * (top - zFloor) * (1 - u) / w; };
+  /* Недолитая эмаль смачивает стенку и лезет по ней вверх: край выше
+     середины, поверхность вогнутая. Перелитая упирается в кромку и
+     вспухает куполом: середина выше края. Это одно явление по разные
+     стороны от кромки, поэтому знак мениска переключается сам.
+
+     У вогнутой чаши ячейка у́же двух ширин мениска стала бы куполом, и
+     подъём гасится по тому, насколько её удалось вдвинуть внутрь — это
+     держит мелочь вроде пальцев плоской. */
+  const edge = dome ? zEdge : zFloor + (zEdge - zFloor) * scale;
+  const mid  = dome ? zFloor : zFloor;              // zFloor здесь — уровень середины
+  const top  = dome ? Math.max(edge, mid) : (w > 0 ? edge : zFloor);
+
+  // u = 0 у стенки, 1 на средней линии ячейки
+  const U = d => (w > 0 ? Math.min(1, d / w) : 1);
+  const H  = dome
+    ? d => { const u = U(d); return edge + (mid - edge) * u * (2 - u); }
+    : d => { const u = U(d); return zFloor + (edge - zFloor) * (1 - u) ** 2; };
+  const dH = dome
+    ? d => { const u = U(d); return u >= 1 ? 0 : 2 * (mid - edge) * (1 - u) / w; }
+    : d => { const u = U(d); return u >= 1 ? 0 : -2 * (edge - zFloor) * (1 - u) / w; };
 
   const field = distanceField([p.outer, ...p.holes]);
   const pos = [], nor = [];
@@ -104,7 +118,8 @@ export function enamelGeometry(poly, { zBottom, zFloor, zEdge }, plan) {
       const L = Math.hypot(dx, dy);
       if (L < EPS) continue;
       const nx = dy / L, ny = -dx / L;
-      const quad = [[a, zBottom], [b, zBottom], [b, top], [a, zBottom], [b, top], [a, top]];
+      const wall = dome ? edge : top;
+      const quad = [[a, zBottom], [b, zBottom], [b, wall], [a, zBottom], [b, wall], [a, wall]];
       for (const [v, z] of quad) { pos.push(v.x, v.y, z); nor.push(nx, ny, 0); }
     }
   }

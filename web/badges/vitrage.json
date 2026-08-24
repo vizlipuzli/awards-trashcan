@@ -1,0 +1,120 @@
+{
+  "name": "Витраж",
+  "art": "toucan.jpg",
+  "trace": {
+    "threshold": 150,
+    "minArea": 120,
+    "tolerance": 1.2,
+    "smoothing": 2,
+    "maxSize": 1100
+  },
+  "scale": {
+    "width": 2.6
+  },
+  "metal": {
+    "color": "#f2c069",
+    "roughness": 0.22,
+    "envMapIntensity": 1.2
+  },
+  "relief": {
+    "plate": 0.1,
+    "fence": 0.105,
+    "enamelDepth": 0.037,
+    "tuck": 0.006,
+    "minWall": 0,
+    "bevel": {
+      "plate": 0.012,
+      "fence": 0.004,
+      "enamel": 0.004
+    },
+    "meniscus": {
+      "rise": 1.45,
+      "width": 0.05,
+      "steps": 5
+    }
+  },
+  "band": {
+    "inset": 0.01,
+    "width": 0.03,
+    "enamel": "cream"
+  },
+  "enamels": {
+    "black": {
+      "color": "#0c0e07",
+      "roughness": 0.5,
+      "clearcoat": 0.22,
+      "clearcoatRoughness": 0.3,
+      "envMapIntensity": 0.12
+    },
+    "cream": {
+      "color": "#f4ead6",
+      "roughness": 0.16,
+      "clearcoat": 1,
+      "clearcoatRoughness": 0.05,
+      "envMapIntensity": 0.9
+    },
+    "orange": {
+      "color": "#ffa22a",
+      "roughness": 0.06,
+      "clearcoat": 1,
+      "transmission": 0.92,
+      "ior": 1.5,
+      "attenuationColor": "#c85a00",
+      "attenuationDistance": 0.5,
+      "backing": false
+    },
+    "red": {
+      "color": "#ff4a3a",
+      "roughness": 0.08,
+      "clearcoat": 1,
+      "opacity": 0.55
+    },
+    "sky": {
+      "color": "#37c8f0",
+      "roughness": 0.18,
+      "clearcoat": 1
+    },
+    "glass": {
+      "color": "#9fe8ff",
+      "roughness": 0.06,
+      "clearcoat": 1,
+      "transmission": 0.95,
+      "ior": 1.5,
+      "attenuationColor": "#2aa6d6",
+      "attenuationDistance": 0.35,
+      "backing": false
+    },
+    "green": {
+      "color": "#63f01c",
+      "roughness": 0.2,
+      "clearcoat": 1,
+      "emissive": "#2f9c0b",
+      "emissiveIntensity": 0.12
+    },
+    "wood": {
+      "color": "#7a4a22",
+      "roughness": 0.35,
+      "clearcoat": 0.6
+    }
+  },
+  "regions": {
+    "0": "black",
+    "1": "orange",
+    "2": "cream",
+    "3": "black",
+    "4": "black",
+    "5": "cream",
+    "6": "red",
+    "7": "wood",
+    "8": "black",
+    "9": "wood",
+    "10": "glass",
+    "11": "black"
+  },
+  "default": null,
+  "scene": {
+    "exposure": 0.82,
+    "bloom": 0.18,
+    "spin": 0.5
+  }
+}

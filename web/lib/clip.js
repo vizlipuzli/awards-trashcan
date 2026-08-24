@@ -49,8 +49,19 @@ export function offset(polys, delta, round = true) {
 }
 
 /* План мениска: эффективная ширина подъёма и кольца от края внутрь.
-   Считается один раз при запекании — в отрисовке Clipper уже не нужен. */
-export function meniscusPlan(poly, width, steps) {
+   Считается один раз при запекании — в отрисовке Clipper уже не нужен.
+
+   full=true берёт вместо заданной ширины наибольшую, на которую ячейку
+   вообще удаётся вдвинуть. Это нужно перелитой эмали: купол должен расти
+   до средней линии ячейки, иначе кольца кончатся на ободке и середина
+   останется плоским блином. */
+export function meniscusPlan(poly, width, steps, full = false) {
+  if (full) {
+    let lo = 0, hi = width;
+    while (offset([poly], -hi).length && hi < 100) hi *= 2;
+    for (let i = 0; i < 14; i++) { const m = (lo + hi) / 2; if (offset([poly], -m).length) lo = m; else hi = m; }
+    width = lo * 0.98;
+  }
   let w = width, inner = offset([poly], -w);
   for (let i = 0; i < 8 && !inner.length && w > 1e-4; i++) { w *= 0.5; inner = offset([poly], -w); }
   if (!inner.length) return { w: 0, scale: 0, bands: [[poly]] };

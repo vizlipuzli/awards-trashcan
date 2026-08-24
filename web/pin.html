@@ -66,12 +66,22 @@ const metal = new THREE.MeshPhysicalMaterial({
   color: new THREE.Color(d.metal?.color ?? '#e7b189'), metalness: 1,
   roughness: d.metal?.roughness ?? 0.24, envMapIntensity: d.metal?.envMapIntensity ?? 1.1 });
 const mats = {};
-for (const [id, e] of Object.entries(d.enamels || {}))
-  mats[id] = new THREE.MeshPhysicalMaterial({
+for (const [id, e] of Object.entries(d.enamels || {})) {
+  const m = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(e.color), metalness: 0, roughness: e.roughness ?? 0.2,
     clearcoat: e.clearcoat ?? 1, clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
     emissive: new THREE.Color(e.emissive ?? '#000000'),
     emissiveIntensity: e.emissiveIntensity ?? 0, envMapIntensity: e.envMapIntensity ?? 1 });
+  if (e.transmission > 0) {
+    m.transmission = e.transmission; m.ior = e.ior ?? 1.5; m.thickness = e.thickness ?? 0.12;
+    if (e.attenuationColor) {
+      m.attenuationColor = new THREE.Color(e.attenuationColor);
+      m.attenuationDistance = e.attenuationDistance ?? 0.4;
+    }
+  }
+  if ((e.opacity ?? 1) < 1) { m.transparent = true; m.opacity = e.opacity; m.depthWrite = false; }
+  mats[id] = m;
+}
 
 const badge = new THREE.Group();
 pivot.add(badge);
@@ -91,8 +101,8 @@ for (const f of d.fills) {
   const mat = mats[f.paint];
   if (!mat) continue;
   badge.add(new THREE.Mesh(enamelGeometry(toPoly(f.poly),
-    { zBottom: d.z.base, zFloor: d.z.fill, zEdge: d.z.edge },
-    { w: f.w, scale: f.scale, bands: f.bands.map(b => b.map(toPoly)) }), mat));
+    { zBottom: f.zBottom ?? d.z.base, zFloor: d.z.mid ?? d.z.fill, zEdge: d.z.edge },
+    { w: f.w, scale: f.scale, dome: f.dome, bands: f.bands.map(b => b.map(toPoly)) }), mat));
 }
 
 const box = new THREE.Box3().setFromObject(badge);

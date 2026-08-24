@@ -269,6 +269,33 @@ function mergeLimit(polys) {
  *  Материалы
  * ------------------------------------------------------------------ */
 let metalMat = null, enamelMats = {};
+
+/* Прозрачность двумя способами, они не заменяют друг друга.
+   transmission — настоящее стекло: преломление и загустение цвета с
+   толщиной. Преломляет оно только сцену, не страницу за холстом.
+   opacity — простое альфа-смешение, зато сквозь него видно всё, что
+   лежит позади, включая саму веб-страницу. */
+function enamelMaterial(e) {
+  const m = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(e.color), metalness: 0,
+    roughness: e.roughness ?? 0.2, clearcoat: e.clearcoat ?? 1,
+    clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
+    emissive: new THREE.Color(e.emissive ?? '#000000'),
+    emissiveIntensity: e.emissiveIntensity ?? 0,
+    envMapIntensity: e.envMapIntensity ?? 1
+  });
+  if (e.transmission > 0) {
+    m.transmission = e.transmission;
+    m.ior = e.ior ?? 1.5;
+    m.thickness = e.thickness ?? 0.12;
+    if (e.attenuationColor) {
+      m.attenuationColor = new THREE.Color(e.attenuationColor);
+      m.attenuationDistance = e.attenuationDistance ?? 0.4;
+    }
+  }
+  if ((e.opacity ?? 1) < 1) { m.transparent = true; m.opacity = e.opacity; m.depthWrite = false; }
+  return m;
+}
 function buildMaterials() {
   metalMat?.dispose();
   metalMat = new THREE.MeshPhysicalMaterial({
@@ -278,14 +305,7 @@ function buildMaterials() {
   for (const m of Object.values(enamelMats)) m.dispose();
   enamelMats = {};
   for (const [id, e] of Object.entries(S.enamels || {}))
-    enamelMats[id] = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color(e.color), metalness: 0,
-      roughness: e.roughness ?? 0.2, clearcoat: e.clearcoat ?? 1,
-      clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
-      emissive: new THREE.Color(e.emissive ?? '#000000'),
-      emissiveIntensity: e.emissiveIntensity ?? 0,
-      envMapIntensity: e.envMapIntensity ?? 1
-    });
+    enamelMats[id] = enamelMaterial(e);
 }
 
 /* ------------------------------------------------------------------ *
@@ -299,14 +319,22 @@ const shapeOf = p => {
 
 let cells = [], picks = [], P = null, LAST = null;
 
-const enamelMesh = (poly, mat, plan) => new THREE.Mesh(enamelGeometry(poly,
-  { zBottom: P.zBase, zFloor: P.zFill, zEdge: P.zEdge },
-  plan ?? C.meniscusPlan(poly, P.men.width, P.men.steps)), mat);
+const paintOf = c => (S.regions || {})[String(c.index)] ?? null;
+
+const enamelMesh = (poly, mat, plan, paint) => {
+  const backed = S.enamels?.[paint]?.backing !== false;
+  return new THREE.Mesh(enamelGeometry(poly,
+    { zBottom: backed ? P.zBase : 0, zFloor: P.zMid, zEdge: P.zEdge },
+    plan ?? { ...C.meniscusPlan(poly, P.men.width, P.men.steps, P.dome), dome: P.dome }), mat);
+};
 
 function fillOf(cell, paint) {
   const mat = enamelMats[paint];
   if (!mat) return null;
-  return enamelMesh(C.offset([cell.piece], P.R.tuck)[0] ?? cell.piece, mat);
+  // у перелитой эмали край выходит на кромку, и запас под стенку стал бы виден
+  const grow = P.dome ? 0 : P.R.tuck;
+  const poly = grow ? (C.offset([cell.piece], grow)[0] ?? cell.piece) : cell.piece;
+  return enamelMesh(poly, mat, null, paint);
 }
 
 function repaint(cell, paint) {
@@ -326,8 +354,14 @@ function build() {
               bevel: { plate: 0.012, fence: 0.004, enamel: 0.004 }, ...(S.relief || {}) };
   const zBase = R.plate, zTop = R.plate + R.fence, zFill = zTop - R.enamelDepth;
   const men = { rise: 0.75, width: 0.05, steps: 5, ...(R.meniscus || {}) };
-  const zEdge = zFill + Math.max(0, Math.min(1, men.rise)) * (zTop - zFill);
-  P = { R, zBase, zTop, zFill, zEdge, men };
+  /* rise до 1 — недолитая эмаль: край лезет по стенке вверх, середина ниже.
+     Выше 1 — перелитая: край упирается в кромку, а середина вспухает над ней,
+     до двух высот ограждения. Мениск выворачивается сам. */
+  const rise = Math.max(0, Math.min(2, men.rise));
+  const dome = rise > 1;
+  const zEdge = dome ? zTop : zFill + rise * (zTop - zFill);
+  const zMid  = dome ? zTop + (rise - 1) * R.fence : zFill;
+  P = { R, zBase, zTop, zFill, zEdge, zMid, dome, men };
 
   const solid = (p, zA, zB, bevel, mat) => {
     const bt = Math.min(bevel, (zB - zA) / 2 - 0.002);
@@ -351,20 +385,26 @@ function build() {
     outline = S.band.inset > 0 ? C.offset(grown, S.band.inset) : grown;
   }
 
-  for (const p of outline) solid(p, 0, zBase, R.bevel.plate, metalMat);
-  for (const p of ring) badge.add(enamelMesh(p, enamelMats[S.band?.enamel] ?? metalMat));
-
   const inner = R.minWall > 0 ? C.offset(field, -R.minWall) : field;
   regions.forEach((r, i) => {
     for (const piece of C.intersect([r], inner)) cells.push({ piece, index: i, mesh: null });
   });
+
+  /* Витраж: под ячейкой с эмалью backing:false пластины нет вовсе, и такая
+     эмаль занимает всю толщину значка — как оконная эмаль в ювелирке,
+     которую держат только перегородки. */
+  const windows = cells.filter(c => paintOf(c) && S.enamels?.[paintOf(c)]?.backing === false)
+                       .map(c => c.piece);
+  const plate = windows.length ? C.subtract(outline, windows) : outline;
+  for (const p of plate) solid(p, 0, zBase, R.bevel.plate, metalMat);
+  for (const p of ring) badge.add(enamelMesh(p, enamelMats[S.band?.enamel] ?? metalMat, null, S.band?.enamel));
 
   // ограждение: вся вырубка минус ячейки и минус полоса канта
   const fence = C.subtract(outline, [...cells.map(c => c.piece), ...ring]);
   for (const f of fence) solid(f, zBase, zTop, R.bevel.fence, metalMat);
 
   LAST = { z: { base: zBase, top: zTop, fill: zFill, edge: zEdge },
-           men, tuck: R.tuck, bevel: R.bevel, plate: outline, ring, fence };
+           men, tuck: R.tuck, bevel: R.bevel, plate, ring, fence };
 
   for (const c of cells) {
     c.mesh = fillOf(c, (S.regions || {})[String(c.index)] ?? null);
@@ -422,7 +462,7 @@ const CONTROLS = [
   ['relief.bevel.plate', 'фаска пластины', 0, 0.05, 0.001, 'geo'],
   ['relief.bevel.fence', 'фаска ограждения', 0, 0.03, 0.0005, 'geo'],
   ['Мениск эмали'],
-  ['relief.meniscus.rise', 'подъём у стенки', 0, 1, 0.01, 'geo'],
+  ['relief.meniscus.rise', 'наполнение', 0, 2, 0.01, 'geo'],
   ['relief.meniscus.width', 'ширина подъёма', 0.005, 0.2, 0.005, 'geo'],
   ['relief.meniscus.steps', 'колец', 2, 10, 1, 'geo'],
   ['Кант'],
@@ -456,6 +496,12 @@ function control([path, label, min, max, step, level, kind]) {
   if (kind === 'color') {
     const c = document.createElement('input'); c.type = 'color'; c.value = get(path) || '#ffffff';
     c.oninput = () => { set(path, c.value); apply(level); };
+    row.append(c);
+  } else if (kind === 'bool') {
+    const c = document.createElement('input'); c.type = 'checkbox';
+    c.checked = get(path) !== false;
+    c.style.justifySelf = 'end';
+    c.onchange = () => { set(path, c.checked); apply(level); };
     row.append(c);
   } else if (kind === 'enamel') {
     const s = document.createElement('select');
@@ -544,6 +590,12 @@ function buildPanel() {
   for (const id of Object.keys(S.enamels || {})) {
     panel.append(control([`enamels.${id}.color`, id, 0, 0, 0, 'mat', 'color']));
     panel.append(control([`enamels.${id}.roughness`, `${id} · шероховатость`, 0, 1, 0.01, 'mat']));
+    S.enamels[id].transmission ??= 0;
+    S.enamels[id].opacity ??= 1;
+    S.enamels[id].backing ??= true;
+    panel.append(control([`enamels.${id}.transmission`, `${id} · стекло`, 0, 1, 0.01, 'mat']));
+    panel.append(control([`enamels.${id}.opacity`, `${id} · непрозрачность`, 0.05, 1, 0.01, 'mat']));
+    panel.append(control([`enamels.${id}.backing`, `${id} · подложка`, 0, 0, 0, 'geo', 'bool']));
   }
 
   const hx = document.createElement('h2'); hx.textContent = 'Готово'; panel.append(hx);
@@ -637,22 +689,41 @@ if (BAKE) {
        триангулировать и выдавить. rings=true кладёт ещё и кольца мениска —
        тогда клиенту не нужен и Clipper, но данных заметно больше. */
     contours: () => {
-      const r = v => Math.round(v * 1000) / 1000;
-      const poly = p => [p.outer.map(v => [r(v.x), r(v.y)]), ...p.holes.map(h => h.map(v => [r(v.x), r(v.y)]))];
+      /* Округление до 3 знаков схлопывало соседние точки колец мениска,
+         и триангулятор тянул из них вырожденные слайверы через весь значок.
+         4 знака плюс отсев совпавших подряд точек. */
+      const r = v => Math.round(v * 10000) / 10000;
+      const ring = pts => {
+        const out = [];
+        for (const v of pts) {
+          const q = [r(v.x), r(v.y)], last = out[out.length - 1];
+          if (!last || last[0] !== q[0] || last[1] !== q[1]) out.push(q);
+        }
+        if (out.length > 1) {
+          const a = out[0], b = out[out.length - 1];
+          if (a[0] === b[0] && a[1] === b[1]) out.pop();
+        }
+        return out;
+      };
+      const poly = p => [ring(p.outer), ...p.holes.map(ring)].filter(x => x.length >= 3);
       const plan = p => {
-        const pl = C.meniscusPlan(p, P.men.width, P.men.steps);
+        const pl = C.meniscusPlan(p, P.men.width, P.men.steps, P.dome);
         return { w: r(pl.w), scale: r(pl.scale), bands: pl.bands.map(b => b.map(poly)) };
       };
       const fills = [];
-      for (const p of LAST.ring) fills.push({ paint: S.band?.enamel, poly: poly(p), ...plan(p) });
+      const add = (p, paint) => {
+        const backed = S.enamels?.[paint]?.backing !== false;
+        fills.push({ paint, poly: poly(p), zBottom: backed ? LAST.z.base : 0,
+                     dome: P.dome, ...plan(p) });
+      };
+      for (const p of LAST.ring) add(p, S.band?.enamel);
       for (const c of cells) {
-        const paint = (S.regions || {})[String(c.index)] ?? null;
+        const paint = paintOf(c);
         if (!paint) continue;
-        const grown = C.offset([c.piece], LAST.tuck)[0] ?? c.piece;
-        fills.push({ paint, poly: poly(grown), ...plan(grown) });
+        add(P.dome ? c.piece : (C.offset([c.piece], LAST.tuck)[0] ?? c.piece), paint);
       }
       return JSON.stringify({
-        z: LAST.z, bevel: LAST.bevel, metal: S.metal, enamels: S.enamels,
+        z: { ...LAST.z, mid: P.zMid }, bevel: LAST.bevel, metal: S.metal, enamels: S.enamels,
         plate: LAST.plate.map(poly), fence: LAST.fence.map(poly), fills
       });
     },
