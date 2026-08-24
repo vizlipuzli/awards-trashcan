@@ -75,7 +75,6 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -83,10 +82,16 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { extract } from './lib/trace.js';
 import { enamelGeometry } from './lib/enamel.js';
 import * as C from './lib/clip.js';
+import { setupLook } from './lib/look.js';
 
 const q = new URLSearchParams(location.search);
 const fail = m => { const d = document.createElement('div'); d.id = 'err'; d.textContent = m; document.body.append(d); throw new Error(m); };
-const PANEL = 300;
+/* Режим запекания: панель убрана, фон прозрачный, квадратный кадр,
+   покачивание и подпрыгивание выключены — иначе петля не сойдётся
+   по стыку, у них другой период. Угол ставится снаружи. */
+const BAKE = q.has('bake');
+const BAKE_SIZE = +(q.get('size') || 512);
+const PANEL = BAKE ? 0 : 300;
 
 /* ------------------------------------------------------------------ *
  *  Состояние: spec из файла, поверх — правки из панели
@@ -115,7 +120,8 @@ const set = (p, v) => {
 /* ------------------------------------------------------------------ *
  *  Сцена
  * ------------------------------------------------------------------ */
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: BAKE });
+if (BAKE) renderer.setClearAlpha(0);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
@@ -126,13 +132,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.enablePan = false;
 controls.minDistance = 2; controls.maxDistance = 24;
 
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-
-const key  = new THREE.DirectionalLight(0xfff1dd, 1.0); key.position.set(3.5, 4.5, 5);
-const rim  = new THREE.DirectionalLight(0x9dff6a, 0.8); rim.position.set(-4.5, 1.5, -3);
-const fill = new THREE.DirectionalLight(0xbdd8ff, 0.45); fill.position.set(-2.5, -3, 4);
-scene.add(key, rim, fill);
+setupLook(renderer, scene, S.scene);
 
 function backdropTexture() {
   const W = 2048, H = 1024;
@@ -153,10 +153,12 @@ function backdropTexture() {
   x.fillStyle = g; x.fillRect(0, 0, W, H);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
-const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(64, 32),
-  new THREE.MeshBasicMaterial({ map: backdropTexture() }));
-backdrop.position.z = -9;
-scene.add(backdrop);
+if (!BAKE) {
+  const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(64, 32),
+    new THREE.MeshBasicMaterial({ map: backdropTexture() }));
+  backdrop.position.z = -9;
+  scene.add(backdrop);
+}
 
 const badge = new THREE.Group();
 const pivot = new THREE.Group();
@@ -363,6 +365,7 @@ function build() {
   for (const c of cells) {
     c.mesh = fillOf(c, (S.regions || {})[String(c.index)] ?? null);
     if (c.mesh) badge.add(c.mesh);
+    if (BAKE) continue;                       // в запекаемую модель мишени не нужны
     const pick = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(c.piece)),
       new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
     pick.position.z = zTop + 0.004;
@@ -594,7 +597,8 @@ renderer.domElement.addEventListener('pointermove', e => {
  *  Старт
  * ------------------------------------------------------------------ */
 function resize() {
-  const w = Math.max(320, innerWidth - PANEL), h = innerHeight;
+  const w = BAKE ? BAKE_SIZE : Math.max(320, innerWidth - PANEL),
+        h = BAKE ? BAKE_SIZE : innerHeight;
   renderer.setSize(w, h); composer.setSize(w, h);
   camera.aspect = w / h; camera.updateProjectionMatrix();
   renderer.domElement.style.left = PANEL + 'px';
@@ -602,19 +606,58 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+if (BAKE) {
+  panel.remove();
+  // фон держит html, а не body — без этого omitBackground не даёт альфу
+  document.documentElement.style.background = 'transparent';
+  document.body.style.background = 'transparent';
+}
+
 traceArt();
 buildMaterials();
 renderer.toneMappingExposure = S.scene?.exposure ?? 0.8;
 bloom.strength = S.scene?.bloom ?? 0.2;
 build();
-buildPanel();
+if (!BAKE) buildPanel();
+
+if (BAKE) {
+  spinning = false;
+  window.__bake = {
+    setAngle: deg => { angle = deg * Math.PI / 180; pivot.rotation.x = 0; pivot.position.y = 0; },
+    regions: regions.length,
+    painted: cells.filter(c => c.mesh).length,
+    /* Геометрия целиком, вместе с материалами. Свет и окружение в glTF не
+       уезжают — вьюер поднимает их сам тем же lib/look.js. */
+    stats: () => {
+      const by = {};
+      badge.traverse(o => { if (!o.geometry) return;
+        const n = o.geometry.getAttribute('position').count;
+        const k = o.material === metalMat ? 'металл' : 'эмаль';
+        by[k] = (by[k] || 0) + n; });
+      return by;
+    },
+    glb: async () => {
+      const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+      const { mergeVertices } = await import('three/addons/utils/BufferGeometryUtils.js');
+      /* Геометрия строится неиндексированной — каждый треугольник несёт
+         свои вершины. Для показа это неважно, а в файле утраивает вес,
+         поэтому перед выгрузкой вершины свариваются. */
+      badge.traverse(o => { if (o.geometry && !o.geometry.index) o.geometry = mergeVertices(o.geometry, 1e-5); });
+      const buf = await new GLTFExporter().parseAsync(badge, { binary: true });
+      let s = '', a = new Uint8Array(buf);
+      for (let i = 0; i < a.length; i += 8192) s += String.fromCharCode(...a.subarray(i, i + 8192));
+      return btoa(s);
+    }
+  };
+}
 
 const clock = new THREE.Clock();
 const FIXED = q.get('t');
 function tick() {
   const dt = clock.getDelta();
   const spin = S.scene?.spin ?? 0.55;
-  if (FIXED !== null) {
+  if (BAKE) { /* угол ставится снаружи */ }
+  else if (FIXED !== null) {
     const t = parseFloat(FIXED);
     angle = t * spin; pivot.rotation.x = Math.sin(t * 0.7) * 0.11;
   } else if (spinning) {
@@ -622,7 +665,9 @@ function tick() {
   }
   pivot.rotation.y = angle;
   controls.update();
-  composer.render();
+  // При запекании постобработка не нужна и вредна: блум размазывает альфу
+  // по всему кадру. Да и свечение — это свет, пролитый на фон, а фона нет.
+  if (BAKE) renderer.render(scene, camera); else composer.render();
   requestAnimationFrame(tick);
 }
 tick();

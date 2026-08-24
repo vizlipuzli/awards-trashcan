@@ -163,8 +163,12 @@ function smooth(pts, iterations) {
 
 /* Кольца одной маски -> {outer, holes} по знаку площади. */
 function toShape(rings, tol, smoothing) {
+  /* Упрощение идёт дважды. Первое снимает пиксельную лесенку, Чайкин
+     скругляет, но учетверяет число точек, а каждая точка контура потом
+     превращается в десятки вершин боковины при выдавливании. Второе
+     упрощение с мелким допуском убирает этот перерасход, форму не трогая. */
   const done = rings
-    .map(r => smooth(simplify(r, tol), smoothing))
+    .map(r => simplify(smooth(simplify(r, tol), smoothing), tol * 0.35))
     .filter(r => r.length >= 3)
     .map(r => ({ pts: r, a: area2(r) }));
   if (!done.length) return null;

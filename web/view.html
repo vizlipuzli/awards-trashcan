@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Значок</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body.bg { background: #0a0d0b; }
+  canvas { display: block; }
+  #err { position: fixed; inset: 0; display: grid; place-items: center;
+    font: 12px ui-monospace, Menlo, monospace; color: #ff6b6b; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/lib/three/build/three.module.js",
+    "three/addons/": "/lib/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { setupLook } from './lib/look.js';
+
+/* Вьюер для запечённой модели. Показывает .glb и больше ничего не умеет:
+   ни растра, ни трассировки, ни Clipper — всё это отработало в редакторе.
+   Свет поднимается тем же lib/look.js, потому что в glTF он не уезжает. */
+const q = new URLSearchParams(location.search);
+const name = q.get('m') || 'toucan';
+const swing = +(q.get('swing') ?? 38);          // 0 — стоит неподвижно
+const period = +(q.get('period') ?? 4);         // секунд на полный размах
+const orbit = q.get('orbit') !== '0';
+if (q.has('bg')) document.body.classList.add('bg');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: !q.has('bg') });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setClearAlpha(q.has('bg') ? 1 : 0);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+setupLook(renderer, scene, { exposure: +(q.get('exposure') ?? 0.8) });
+
+const pivot = new THREE.Group();
+scene.add(pivot);
+
+const fail = m => { const d = document.createElement('div'); d.id = 'err'; d.textContent = m; document.body.append(d); };
+
+let controls = null;
+new GLTFLoader().load(`./dist/${name}.glb`, gltf => {
+  const model = gltf.scene;
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3(), mid = new THREE.Vector3();
+  box.getSize(size); box.getCenter(mid);
+  model.position.sub(mid);
+  pivot.add(model);
+
+  const fit = () => Math.max(size.x / camera.aspect, size.y) / (2 * Math.tan(Math.PI * 35 / 360)) * 1.2;
+  resize();
+  camera.position.set(0, 0, fit());
+  if (orbit) {
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.enablePan = false;
+    controls.minDistance = size.y * 0.6; controls.maxDistance = size.y * 6;
+  }
+  tick();
+}, undefined, () => fail(`не загрузилась ./dist/${name}.glb`));
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+const clock = new THREE.Clock();
+const FIXED = q.get('t');
+function tick() {
+  const t = FIXED !== null ? parseFloat(FIXED) : clock.getElapsedTime();
+  pivot.rotation.y = THREE.MathUtils.degToRad(swing) * Math.sin(t * 2 * Math.PI / period);
+  controls?.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
