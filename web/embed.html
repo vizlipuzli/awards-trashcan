@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Значок — три способа вставить</title>
+<style>
+  body { margin:0; font:14px/1.6 ui-monospace,"SF Mono",Menlo,monospace; background:#fff; color:#333 }
+  section { padding:30px 40px; border-bottom:1px solid #e6e6e6 }
+  .dark { background:#14171a; color:#8fa89a; border-color:#222 }
+  .tint { background:linear-gradient(135deg,#5b8def,#a86fe0); color:#fff; border:0 }
+  h1 { font-size:12px; letter-spacing:.24em; text-transform:uppercase; font-weight:400; opacity:.5; margin:0 0 4px }
+  h2 { font-size:11px; letter-spacing:.22em; text-transform:uppercase; opacity:.6; font-weight:400; margin:0 0 6px }
+  p.n { font-size:12px; opacity:.65; margin:0 0 20px; max-width:86ch }
+  .row { display:flex; gap:40px; align-items:flex-end; flex-wrap:wrap }
+  figure { margin:0; text-align:center }
+  figcaption { font-size:11px; opacity:.6; margin-top:9px; line-height:1.5 }
+  b { font-weight:400; color:#1a7f37 } .dark b { color:#7bd45f }
+  code { display:inline-block; background:rgba(128,128,128,.14); padding:9px 12px; border-radius:4px; margin-top:18px; font-size:12px }
+  iframe { border:0; display:block; width:300px; height:300px }
+</style>
+
+<section>
+  <h1>Тукан · три способа вставить один и тот же значок</h1>
+  <p class="n">Все три оставлены намеренно: они отвечают на разные вопросы, а не соревнуются.
+     Вес указан в gzip там, где он что-то значит.</p>
+</section>
+
+<section>
+  <h2>1 · контуры — <b>84 КБ</b> — по умолчанию</h2>
+  <p class="n">Везём не сетку, а плоские контуры; клиент их триангулирует и выдавливает.
+     Чёткость на любом размере и плотности экрана, у всех одинаково, страница не подвисает.
+     Нужен WebGL.</p>
+  <div class="row">
+    <figure><iframe src="pin.html?p=toucan" title="Тукан"></iframe><figcaption>pin.html · без Clipper и без растра</figcaption></figure>
+  </div>
+  <code>&lt;iframe src="pin.html?p=toucan"&gt;&lt;/iframe&gt;</code>
+</section>
+
+<section>
+  <h2>2 · растр — <b>699 КБ</b> — когда скриптов нет вовсе</h2>
+  <p class="n">Письмо, README, чужая CMS, которая вырезает скрипты. Файл 512 px показан в 256 —
+     так он остаётся чётким и на ретине. Прозрачный, ложится на любой фон.</p>
+  <div class="row">
+    <figure><img src="dist/toucan-512.webp" width="256" alt="Тукан"><figcaption>512 px @2×</figcaption></figure>
+    <figure><img src="dist/toucan-256.webp" width="256" alt="Тукан"><figcaption>256 px · 151 КБ</figcaption></figure>
+    <figure><img src="dist/toucan-poster.png" width="256" alt="Тукан"><figcaption>постер-кадр, без анимации</figcaption></figure>
+  </div>
+  <code>&lt;img src="toucan-512.webp" width="256" alt="Тукан"&gt;</code>
+</section>
+
+<section class="tint">
+  <h2>прозрачность на цветном фоне</h2>
+  <div class="row">
+    <figure><img src="dist/toucan-512.webp" width="256" alt=""></figure>
+    <figure><iframe src="pin.html?p=toucan" title=""></iframe></figure>
+  </div>
+</section>
+
+<section class="dark">
+  <h2>3 · модель .glb — <b>1592 КБ</b> — для чужих вьюеров</h2>
+  <p class="n">Тот же результат, но в стандартном формате: его понимают model-viewer, редакторы,
+     AR на телефоне. За переносимость платим двадцатикратным весом против контуров.</p>
+  <div class="row">
+    <figure><iframe src="view.html?m=toucan" title="Тукан"></iframe><figcaption>view.html · toucan.glb</figcaption></figure>
+  </div>
+  <code>&lt;iframe src="view.html?m=toucan"&gt;&lt;/iframe&gt;</code>
+</section>
