@@ -5,16 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Награда</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #07090a; overflow: hidden; }
-  canvas { display: block; }
-  #hint, #err {
-    position: fixed; left: 50%; transform: translateX(-50%);
-    font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-    letter-spacing: .16em; text-transform: uppercase; pointer-events: none; user-select: none;
-  }
-  #hint { bottom: 18px; color: #4d7a44; }
-  #err  { top: 40%; color: #ff6b6b; text-transform: none; letter-spacing: 0; max-width: 70ch;
-          white-space: pre-wrap; line-height: 1.6; }
+  :root { --panel: 300px; --line: #1e2b1c; --ink: #9ab894; --dim: #5d7a58; }
+  html, body { margin: 0; height: 100%; background: #07090a; overflow: hidden;
+    font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); }
+  canvas { display: block; position: absolute; top: 0; }
+
+  #panel { position: fixed; left: 0; top: 0; bottom: 0; width: var(--panel);
+    background: #0b0f0c; border-right: 1px solid var(--line);
+    overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 40px; box-sizing: border-box; }
+  #panel::-webkit-scrollbar { width: 8px; }
+  #panel::-webkit-scrollbar-thumb { background: #1e2b1c; }
+
+  h2 { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--dim);
+    margin: 18px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--line); font-weight: 400; }
+  h2:first-child { margin-top: 0; }
+
+  .row { display: grid; grid-template-columns: 1fr 58px; gap: 6px; align-items: center; margin: 5px 0; }
+  .row label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row input[type=range] { grid-column: 1 / -1; width: 100%; height: 3px; margin: 1px 0 4px;
+    -webkit-appearance: none; appearance: none; background: var(--line); border-radius: 2px; }
+  .row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px;
+    border-radius: 50%; background: #7bd45f; cursor: pointer; }
+  .row input[type=number], .row select { background: #121a12; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 3px; padding: 2px 4px; font: inherit; width: 100%; box-sizing: border-box; }
+  .row input[type=color] { grid-column: 2; width: 100%; height: 20px; padding: 0; border: 1px solid var(--line);
+    background: none; border-radius: 3px; cursor: pointer; }
+
+  button { background: #121a12; color: var(--ink); border: 1px solid var(--line); border-radius: 3px;
+    padding: 6px 8px; font: inherit; cursor: pointer; letter-spacing: .1em; text-transform: uppercase; }
+  button:hover { border-color: #3f5c3a; color: #cfe3c9; }
+  button.on { background: #1d3a17; border-color: #4e7d44; color: #cfe3c9; }
+  .bar { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+  .bar.one { grid-template-columns: 1fr; }
+
+  #swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px 5px; margin: 8px 0 20px; }
+  .sw { height: 26px; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; position: relative; }
+  .sw.sel { outline: 2px solid #7bd45f; outline-offset: 1px; }
+  .sw span { position: absolute; left: -2px; right: -2px; bottom: -13px; text-align: center; font-size: 8px;
+    color: var(--dim); letter-spacing: .04em; overflow: hidden; }
+
+  #note { color: var(--dim); margin: 6px 0 0; }
+  #note b { color: #7bd45f; font-weight: 400; }
+  textarea { width: 100%; height: 130px; background: #121a12; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 3px; font: inherit; padding: 6px; box-sizing: border-box; resize: vertical; }
+  #err { position: fixed; left: calc(var(--panel) + 40px); top: 40%; color: #ff6b6b; max-width: 60ch;
+    white-space: pre-wrap; }
 </style>
 <script type="importmap">
 {
@@ -26,7 +61,7 @@
 </script>
 </head>
 <body>
-<div id="hint">перетащите, чтобы осмотреть · колесо — приблизить</div>
+<div id="panel"></div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -36,60 +71,50 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { extract } from './lib/trace.js';
-import * as C from './lib/clip.js';
 import { enamelGeometry } from './lib/enamel.js';
+import * as C from './lib/clip.js';
 
 const q = new URLSearchParams(location.search);
-const fail = msg => { const d = document.createElement('div'); d.id = 'err'; d.textContent = msg; document.body.append(d); throw new Error(msg); };
+const fail = m => { const d = document.createElement('div'); d.id = 'err'; d.textContent = m; document.body.append(d); throw new Error(m); };
+const PANEL = 300;
 
 /* ------------------------------------------------------------------ *
- *  Данные значка: картинка-раскраска + параметры
+ *  Состояние: spec из файла, поверх — правки из панели
  * ------------------------------------------------------------------ */
 const name = q.get('b') || 'toucan';
-const spec = await fetch(`./badges/${name}.json`).then(r => r.ok ? r.json() : fail(`нет ./badges/${name}.json`));
+const base = await fetch(`./badges/${name}.json`).then(r => r.ok ? r.json() : fail(`нет ./badges/${name}.json`));
+const KEY = `awards:${name}`;
 
-const img = new Image();
-img.src = `./badges/${spec.art}`;
-await img.decode().catch(() => fail(`не читается ./badges/${spec.art}`));
+const strip = o => JSON.parse(JSON.stringify(o, (k, v) => k.startsWith('//') ? undefined : v));
+const merge = (a, b) => {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b || {}))
+    out[k] = v && typeof v === 'object' && !Array.isArray(v) ? merge(a[k] || {}, v) : v;
+  return out;
+};
+let S = strip(base);
+try { const saved = localStorage.getItem(KEY); if (saved) S = merge(S, JSON.parse(saved)); } catch {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
 
-const tr = { threshold: 150, minArea: 120, tolerance: 1.2, smoothing: 2, maxSize: 1100, ...(spec.trace || {}) };
-const k = Math.min(1, tr.maxSize / Math.max(img.width, img.height));
-const cw = Math.round(img.width * k), ch = Math.round(img.height * k);
-const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
-const g2 = cv.getContext('2d', { willReadFrequently: true });
-g2.fillStyle = '#fff'; g2.fillRect(0, 0, cw, ch);
-g2.drawImage(img, 0, 0, cw, ch);
-
-const art = extract(g2.getImageData(0, 0, cw, ch), tr);
-if (!art.silhouette) fail('не удалось найти силуэт — картинка целиком фон?');
-
-/* пиксели -> сцена: центрируем и разворачиваем ось Y */
-const xs = art.silhouette.outer.map(p => p[0]), ys = art.silhouette.outer.map(p => p[1]);
-const bx0 = Math.min(...xs), bx1 = Math.max(...xs);
-const by0 = Math.min(...ys), by1 = Math.max(...ys);
-const S = (spec.scale?.width ?? 2.4) / (bx1 - bx0);
-const mx = (bx0 + bx1) / 2, my = (by0 + by1) / 2;
-const T = ring => ring.map(([x, y]) => ({ x: (x - mx) * S, y: (my - y) * S }));
-const poly = s => ({ outer: T(s.outer), holes: s.holes.map(T) });
-
-const silhouette = [poly(art.silhouette)];
-const regions = art.regions.map(poly);
+const get = p => p.split('.').reduce((o, k) => o?.[k], S);
+const set = (p, v) => {
+  const k = p.split('.'); const last = k.pop();
+  k.reduce((o, x) => (o[x] ??= {}), S)[last] = v;
+};
 
 /* ------------------------------------------------------------------ *
  *  Сцена
  * ------------------------------------------------------------------ */
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = spec.scene?.exposure ?? 0.8;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.enablePan = false;
-controls.minDistance = 3; controls.maxDistance = 20;
+controls.minDistance = 2; controls.maxDistance = 24;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -99,7 +124,7 @@ const rim  = new THREE.DirectionalLight(0x9dff6a, 0.8); rim.position.set(-4.5, 1
 const fill = new THREE.DirectionalLight(0xbdd8ff, 0.45); fill.position.set(-2.5, -3, 4);
 scene.add(key, rim, fill);
 
-function makeBackdrop() {
+function backdropTexture() {
   const W = 2048, H = 1024;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
@@ -113,152 +138,392 @@ function makeBackdrop() {
   for (let i = 0; i <= W; i += step * 4) { x.moveTo(i + .5, 0); x.lineTo(i + .5, H); }
   for (let j = 0; j <= H; j += step * 4) { x.moveTo(0, j + .5); x.lineTo(W, j + .5); }
   x.stroke();
-  const gr = x.createRadialGradient(W / 2, H / 2, H * .12, W / 2, H / 2, H * .78);
-  gr.addColorStop(0, 'rgba(10,13,11,0)'); gr.addColorStop(1, 'rgba(4,6,5,0.96)');
-  x.fillStyle = gr; x.fillRect(0, 0, W, H);
+  const g = x.createRadialGradient(W / 2, H / 2, H * .12, W / 2, H / 2, H * .78);
+  g.addColorStop(0, 'rgba(10,13,11,0)'); g.addColorStop(1, 'rgba(4,6,5,0.96)');
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(64, 32),
-  new THREE.MeshBasicMaterial({ map: makeBackdrop() }));
+  new THREE.MeshBasicMaterial({ map: backdropTexture() }));
 backdrop.position.z = -9;
 scene.add(backdrop);
-
-/* ------------------------------------------------------------------ *
- *  Материалы из spec
- * ------------------------------------------------------------------ */
-const metalMat = new THREE.MeshPhysicalMaterial({
-  color: new THREE.Color(spec.metal?.color ?? '#e7b189'),
-  metalness: 1,
-  roughness: spec.metal?.roughness ?? 0.24,
-  envMapIntensity: spec.metal?.envMapIntensity ?? 1.1
-});
-const enamelMats = {};
-for (const [id, e] of Object.entries(spec.enamels || {})) {
-  enamelMats[id] = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(e.color),
-    metalness: 0,
-    roughness: e.roughness ?? 0.2,
-    clearcoat: e.clearcoat ?? 1,
-    clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
-    emissive: new THREE.Color(e.emissive ?? '#000000'),
-    emissiveIntensity: e.emissiveIntensity ?? 0,
-    envMapIntensity: e.envMapIntensity ?? 1
-  });
-}
-
-/* ------------------------------------------------------------------ *
- *  Три слоя: пластина -> эмаль -> приподнятое металлическое ограждение
- * ------------------------------------------------------------------ */
-const R = { plate: 0.10, fence: 0.105, enamelDepth: 0.037, tuck: 0.013, minWall: 0.022,
-            bevel: { plate: 0.02, fence: 0.012, enamel: 0.006 },
-            meniscus: { rise: 0.75, width: 0.05, steps: 5 }, ...(spec.relief || {}) };
-const Z_BASE = R.plate, Z_TOP = R.plate + R.fence, Z_FILL = Z_TOP - R.enamelDepth;
-
-/* rise: 0 — эмаль плоская, 1 — у стенки выходит вровень с верхом канта */
-const MEN = { rise: 0.75, width: 0.05, steps: 5, ...(R.meniscus || {}) };
-const Z_EDGE = Z_FILL + Math.max(0, Math.min(1, MEN.rise)) * (Z_TOP - Z_FILL);
-
-function enamel(polys, mat) {
-  for (const p of polys) badge.add(new THREE.Mesh(enamelGeometry(p, {
-    zBottom: Z_BASE, zFloor: Z_FILL, zEdge: Z_EDGE, width: MEN.width, steps: MEN.steps
-  }), mat));
-}
 
 const badge = new THREE.Group();
 const pivot = new THREE.Group();
 pivot.add(badge);
 scene.add(pivot);
 
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.2, 0.4, 1.0);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+/* ------------------------------------------------------------------ *
+ *  Разбор картинки. suggest даёт два числа, которые нельзя выбирать
+ *  на вкус — они свойства рисунка: толщина штриха и предел ширины канта.
+ * ------------------------------------------------------------------ */
+const img = new Image();
+img.src = `./badges/${S.art}`;
+await img.decode().catch(() => fail(`не читается ./badges/${S.art}`));
+
+let art, unit, silhouette, regions, suggest;
+
+function traceArt() {
+  const tr = { threshold: 150, minArea: 120, tolerance: 1.2, smoothing: 2, maxSize: 1100, ...(S.trace || {}) };
+  const k = Math.min(1, tr.maxSize / Math.max(img.width, img.height));
+  const cw = Math.round(img.width * k), ch = Math.round(img.height * k);
+  const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch);
+  g.drawImage(img, 0, 0, cw, ch);
+
+  art = extract(g.getImageData(0, 0, cw, ch), tr);
+  if (!art.silhouette) fail('силуэт не найден — картинка целиком фон?');
+
+  const xs = art.silhouette.outer.map(p => p[0]), ys = art.silhouette.outer.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  unit = (S.scale?.width ?? 2.4) / (x1 - x0);
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  const T = r => r.map(([x, y]) => ({ x: (x - mx) * unit, y: (my - y) * unit }));
+  const poly = s => ({ outer: T(s.outer), holes: s.holes.map(T) });
+
+  silhouette = [poly(art.silhouette)];
+  regions = art.regions.map(poly);
+  suggest = { ink: art.suggest.ink * unit, band: art.suggest.band * unit };
+
+  // выведенное из рисунка подставляем только если в spec не задано
+  S.relief ??= {}; S.relief.bevel ??= {};
+  S.relief.bevel.fence ??= +(suggest.ink * 0.25).toFixed(4);
+  S.relief.minWall ??= +(suggest.ink * 0.6).toFixed(4);
+  if (S.band) {
+    S.band.inset ??= +(suggest.band * 0.15).toFixed(4);
+    S.band.width ??= +(suggest.band * 0.45).toFixed(4);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Материалы
+ * ------------------------------------------------------------------ */
+let metalMat = null, enamelMats = {};
+function buildMaterials() {
+  metalMat?.dispose();
+  metalMat = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(S.metal?.color ?? '#e7b189'), metalness: 1,
+    roughness: S.metal?.roughness ?? 0.24, envMapIntensity: S.metal?.envMapIntensity ?? 1.1
+  });
+  for (const m of Object.values(enamelMats)) m.dispose();
+  enamelMats = {};
+  for (const [id, e] of Object.entries(S.enamels || {}))
+    enamelMats[id] = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(e.color), metalness: 0,
+      roughness: e.roughness ?? 0.2, clearcoat: e.clearcoat ?? 1,
+      clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
+      emissive: new THREE.Color(e.emissive ?? '#000000'),
+      emissiveIntensity: e.emissiveIntensity ?? 0,
+      envMapIntensity: e.envMapIntensity ?? 1
+    });
+}
+
+/* ------------------------------------------------------------------ *
+ *  Сборка: пластина -> эмаль -> приподнятое ограждение
+ * ------------------------------------------------------------------ */
 const shapeOf = p => {
   const s = new THREE.Shape(p.outer.map(v => new THREE.Vector2(v.x, v.y)));
   for (const h of p.holes) s.holes.push(new THREE.Path(h.map(v => new THREE.Vector2(v.x, v.y))));
   return s;
 };
-function solid(p, zA, zB, bevel, mat) {
-  const bt = Math.min(bevel, (zB - zA) / 2 - 0.002);
-  const geo = new THREE.ExtrudeGeometry(shapeOf(p), {
-    depth: (zB - zA) - bt * 2, bevelEnabled: true, bevelThickness: bt,
-    bevelSize: bevel, bevelOffset: 0, bevelSegments: 3, curveSegments: 1
+
+let cells = [], picks = [], P = null;
+
+const enamelMesh = (poly, mat) => new THREE.Mesh(enamelGeometry(poly, {
+  zBottom: P.zBase, zFloor: P.zFill, zEdge: P.zEdge, width: P.men.width, steps: P.men.steps }), mat);
+
+function fillOf(cell, paint) {
+  const mat = enamelMats[paint];
+  if (!mat) return null;
+  return enamelMesh(C.offset([cell.piece], P.R.tuck)[0] ?? cell.piece, mat);
+}
+
+function repaint(cell, paint) {
+  if (cell.mesh) { badge.remove(cell.mesh); cell.mesh.geometry.dispose(); cell.mesh = null; }
+  cell.mesh = fillOf(cell, paint);
+  if (cell.mesh) badge.add(cell.mesh);
+}
+
+function build() {
+  for (const o of [...badge.children]) {
+    badge.remove(o); o.geometry?.dispose();
+    if (o.userData.cell) o.material.dispose();
+  }
+  cells = []; picks = [];
+
+  const R = { plate: 0.10, fence: 0.105, enamelDepth: 0.037, tuck: 0.006, minWall: 0.01,
+              bevel: { plate: 0.012, fence: 0.004, enamel: 0.004 }, ...(S.relief || {}) };
+  const zBase = R.plate, zTop = R.plate + R.fence, zFill = zTop - R.enamelDepth;
+  const men = { rise: 0.75, width: 0.05, steps: 5, ...(R.meniscus || {}) };
+  const zEdge = zFill + Math.max(0, Math.min(1, men.rise)) * (zTop - zFill);
+  P = { R, zBase, zTop, zFill, zEdge, men };
+
+  const solid = (p, zA, zB, bevel, mat) => {
+    const bt = Math.min(bevel, (zB - zA) / 2 - 0.002);
+    const geo = new THREE.ExtrudeGeometry(shapeOf(p), {
+      depth: (zB - zA) - bt * 2, bevelEnabled: true, bevelThickness: bt,
+      bevelSize: bevel, bevelOffset: 0, bevelSegments: 3, curveSegments: 1
+    });
+    geo.translate(0, 0, zA + bt);
+    badge.add(new THREE.Mesh(geo, mat));
+  };
+
+  for (const p of silhouette) solid(p, 0, zBase, R.bevel.plate, metalMat);
+
+  let field = silhouette;
+  if (S.band && S.band.width > 0) {
+    const a = C.offset(silhouette, -S.band.inset);
+    const b = C.offset(silhouette, -(S.band.inset + S.band.width));
+    const mat = enamelMats[S.band.enamel] ?? metalMat;
+    for (const p of C.subtract(a, b)) badge.add(enamelMesh(p, mat));
+    field = b;
+  }
+
+  const inner = C.offset(field, -R.minWall);
+  regions.forEach((r, i) => {
+    for (const piece of C.intersect([r], inner)) cells.push({ piece, index: i, mesh: null });
   });
-  geo.translate(0, 0, zA + bt);
-  badge.add(new THREE.Mesh(geo, mat));
+
+  for (const f of C.subtract(field, cells.map(c => c.piece)))
+    solid(f, zBase, zTop, R.bevel.fence, metalMat);
+
+  for (const c of cells) {
+    c.mesh = fillOf(c, (S.regions || {})[String(c.index)] ?? null);
+    if (c.mesh) badge.add(c.mesh);
+    const pick = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(c.piece)),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+    pick.position.z = zTop + 0.004;
+    pick.userData.cell = c;
+    badge.add(pick); picks.push(pick);
+  }
+
+  const box = new THREE.Box3().setFromObject(badge);
+  const size = new THREE.Vector3(), mid = new THREE.Vector3();
+  box.getSize(size); box.getCenter(mid);
+  badge.position.set(-mid.x, -mid.y, 0);
+  if (!camera.userData.placed) {
+    camera.position.set(0, 0, Math.max(size.x / camera.aspect, size.y) / (2 * Math.tan(Math.PI * 35 / 360)) * 1.25);
+    camera.userData.placed = true;
+  }
+  status();
 }
-
-/* пластина по внешнему контуру */
-for (const p of silhouette) solid(p, 0, Z_BASE, R.bevel.plate, metalMat);
-
-/* кант вокруг всего — эквидистанта внешнего контура */
-const band = spec.band;
-let field = silhouette;
-if (band && band.width > 0) {
-  const a = C.offset(silhouette, -band.inset);
-  const b = C.offset(silhouette, -(band.inset + band.width));
-  enamel(C.subtract(a, b), enamelMats[band.enamel] ?? metalMat);
-  field = b;
-}
-
-/* области, обрезанные полем и отодвинутые от его края на стенку */
-const inner = C.offset(field, -R.minWall);
-const cells = [];
-regions.forEach((r, i) => {
-  const paint = (spec.regions || {})[String(i)] ?? spec.default ?? null;
-  for (const piece of C.intersect([r], inner)) cells.push({ piece, paint, i });
-});
-
-/* Ограждение — это поле минус все ячейки. Разность считает Clipper:
-   он сам разложит результат на контуры с дырками и на островки внутри
-   дырок (зрачок), так что вручную решать, что куда вложено, не нужно. */
-for (const f of C.subtract(field, cells.map(c => c.piece)))
-  solid(f, Z_BASE, Z_TOP, R.bevel.fence, metalMat);
-
-/* эмаль — шире проёма на tuck, уходит под стенку */
-let painted = 0;
-for (const c of cells) {
-  const mat = enamelMats[c.paint];
-  if (!mat) continue;
-  enamel(C.offset([c.piece], R.tuck), mat);
-  painted++;
-}
-
-console.log(`${name}: областей ${regions.length}, в поле ${cells.length}, залито ${painted}, ` +
-            `мелких отброшено ${art.dropped}`);
-
-/* центрируем и ставим камеру по габариту */
-const box = new THREE.Box3().setFromObject(badge);
-const size = new THREE.Vector3(), mid = new THREE.Vector3();
-box.getSize(size); box.getCenter(mid);
-badge.position.set(-mid.x, -mid.y, 0);
-camera.position.set(0, 0, Math.max(size.x / camera.aspect, size.y) / (2 * Math.tan(Math.PI * 35 / 360)) * 1.25);
 
 /* ------------------------------------------------------------------ *
- *  Постобработка и анимация
+ *  Панель
  * ------------------------------------------------------------------ */
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight),
-  spec.scene?.bloom ?? 0.20, 0.4, 1.0));
-composer.addPass(new OutputPass());
+const panel = document.getElementById('panel');
+const note = document.createElement('p'); note.id = 'note';
+const status = () => {
+  note.innerHTML = `областей <b>${regions.length}</b> · залито <b>${cells.filter(c => c.mesh).length}</b>` +
+    ` · мелких отброшено <b>${art.dropped}</b><br>штрих из рисунка <b>${suggest.ink.toFixed(3)}</b>` +
+    ` · предел канта <b>${suggest.band.toFixed(3)}</b>`;
+};
+
+let spinning = true, angle = 0;
+let selected = Object.keys(S.enamels || {})[0] ?? null;
+
+const CONTROLS = [
+  ['Сцена'],
+  ['scene.exposure', 'экспозиция', 0.2, 2, 0.01, 'mat'],
+  ['scene.bloom', 'свечение', 0, 1, 0.01, 'post'],
+  ['scene.spin', 'скорость вращения', 0, 2, 0.05, 'none'],
+  ['Размер'],
+  ['scale.width', 'ширина значка', 1, 5, 0.05, 'trace'],
+  ['Металл'],
+  ['metal.color', 'цвет', 0, 0, 0, 'mat', 'color'],
+  ['metal.roughness', 'шероховатость', 0, 1, 0.01, 'mat'],
+  ['metal.envMapIntensity', 'отражения', 0, 3, 0.05, 'mat'],
+  ['Рельеф'],
+  ['relief.plate', 'пластина', 0.02, 0.4, 0.005, 'geo'],
+  ['relief.fence', 'высота ограждения', 0.02, 0.4, 0.005, 'geo'],
+  ['relief.enamelDepth', 'утопление эмали', 0, 0.2, 0.002, 'geo'],
+  ['relief.tuck', 'заход под стенку', 0, 0.05, 0.001, 'geo'],
+  ['relief.minWall', 'стенка до канта', 0, 0.1, 0.002, 'geo'],
+  ['relief.bevel.plate', 'фаска пластины', 0, 0.05, 0.001, 'geo'],
+  ['relief.bevel.fence', 'фаска ограждения', 0, 0.03, 0.0005, 'geo'],
+  ['Мениск эмали'],
+  ['relief.meniscus.rise', 'подъём у стенки', 0, 1, 0.01, 'geo'],
+  ['relief.meniscus.width', 'ширина подъёма', 0.005, 0.2, 0.005, 'geo'],
+  ['relief.meniscus.steps', 'колец', 2, 10, 1, 'geo'],
+  ['Кант'],
+  ['band.inset', 'отступ от края', 0, 0.2, 0.002, 'geo'],
+  ['band.width', 'ширина', 0, 0.3, 0.002, 'geo'],
+  ['band.enamel', 'эмаль', 0, 0, 0, 'geo', 'enamel'],
+  ['Растр'],
+  ['trace.threshold', 'порог чёрного', 40, 240, 1, 'trace'],
+  ['trace.minArea', 'мин. площадь', 10, 2000, 10, 'trace'],
+  ['trace.tolerance', 'упрощение', 0.2, 4, 0.1, 'trace'],
+  ['trace.smoothing', 'сглаживание', 0, 4, 1, 'trace'],
+  ['trace.maxSize', 'рабочий размер', 400, 2000, 50, 'trace']
+];
+
+function apply(level) {
+  if (level === 'none') { save(); return; }
+  if (level === 'post') { bloom.strength = S.scene?.bloom ?? 0.2; save(); return; }
+  if (level === 'mat') {
+    renderer.toneMappingExposure = S.scene?.exposure ?? 0.8;
+    buildMaterials(); build(); save(); return;
+  }
+  if (level === 'trace') traceArt();
+  build(); save();
+}
+
+function control([path, label, min, max, step, level, kind]) {
+  const row = document.createElement('div'); row.className = 'row';
+  const l = document.createElement('label'); l.textContent = label; l.title = path;
+  row.append(l);
+
+  if (kind === 'color') {
+    const c = document.createElement('input'); c.type = 'color'; c.value = get(path) || '#ffffff';
+    c.oninput = () => { set(path, c.value); apply(level); };
+    row.append(c);
+  } else if (kind === 'enamel') {
+    const s = document.createElement('select');
+    for (const k of Object.keys(S.enamels || {})) s.append(new Option(k, k));
+    s.value = get(path) ?? '';
+    s.onchange = () => { set(path, s.value); apply(level); };
+    row.append(s);
+  } else {
+    const n = document.createElement('input'); n.type = 'number';
+    n.min = min; n.max = max; n.step = step; n.value = get(path) ?? 0;
+    const r = document.createElement('input'); r.type = 'range';
+    r.min = min; r.max = max; r.step = step; r.value = n.value;
+    n.onchange = () => { r.value = n.value; set(path, +n.value); apply(level); };
+    r.oninput = () => { n.value = r.value; set(path, +r.value); if (level === 'mat' || level === 'post') apply(level); };
+    r.onchange = () => { if (level !== 'mat' && level !== 'post') apply(level); };
+    row.append(n, r);
+  }
+  return row;
+}
+
+function buildPanel() {
+  panel.textContent = '';
+
+  const h0 = document.createElement('h2'); h0.textContent = 'Заливка'; panel.append(h0);
+
+  const spin = document.createElement('button');
+  const setSpin = v => { spinning = v; spin.textContent = v ? 'остановить вращение' : 'вращать'; spin.classList.toggle('on', !v); };
+  spin.onclick = () => setSpin(!spinning);
+  setSpin(spinning);
+  const bar = document.createElement('div'); bar.className = 'bar one'; bar.append(spin);
+  panel.append(bar);
+
+  const sw = document.createElement('div'); sw.id = 'swatches';
+  for (const p of [...Object.keys(S.enamels || {}), null]) {
+    const b = document.createElement('div'); b.className = 'sw';
+    b.style.background = p ? S.enamels[p].color
+      : 'repeating-linear-gradient(45deg,#c9a227,#c9a227 4px,#8a6d18 4px,#8a6d18 8px)';
+    const cap = document.createElement('span'); cap.textContent = p ?? 'металл';
+    b.append(cap);
+    b.classList.toggle('sel', p === selected);
+    b.onclick = () => { selected = p; [...sw.children].forEach(e => e.classList.remove('sel')); b.classList.add('sel'); };
+    sw.append(b);
+  }
+  panel.append(sw, note);
+
+  for (const c of CONTROLS) {
+    if (c.length === 1) { const h = document.createElement('h2'); h.textContent = c[0]; panel.append(h); }
+    else if (get(c[0]) !== undefined) panel.append(control(c));
+  }
+
+  const he = document.createElement('h2'); he.textContent = 'Эмали'; panel.append(he);
+  for (const id of Object.keys(S.enamels || {})) {
+    panel.append(control([`enamels.${id}.color`, id, 0, 0, 0, 'mat', 'color']));
+    panel.append(control([`enamels.${id}.roughness`, `${id} · шероховатость`, 0, 1, 0.01, 'mat']));
+  }
+
+  const hx = document.createElement('h2'); hx.textContent = 'Готово'; panel.append(hx);
+  const out = document.createElement('textarea'); out.readOnly = true;
+  const dump = () => { out.value = JSON.stringify(S, null, 2); };
+  const b1 = document.createElement('button'); b1.textContent = 'показать json'; b1.onclick = dump;
+  const b2 = document.createElement('button'); b2.textContent = 'копировать';
+  b2.onclick = () => { dump(); navigator.clipboard?.writeText(out.value);
+    b2.textContent = 'скопировано'; setTimeout(() => b2.textContent = 'копировать', 1200); };
+  const b3 = document.createElement('button'); b3.textContent = 'сбросить правки';
+  b3.onclick = () => { localStorage.removeItem(KEY); location.reload(); };
+  const bb = document.createElement('div'); bb.className = 'bar'; bb.append(b1, b2);
+  const bc = document.createElement('div'); bc.className = 'bar one'; bc.append(b3);
+  panel.append(bb, bc, out);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Клик по области — заливка выбранным цветом
+ * ------------------------------------------------------------------ */
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let down = null, hovered = null;
+
+const hit = ev => {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  return ray.intersectObjects(picks, false)[0]?.object ?? null;
+};
+
+renderer.domElement.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', e => {
+  const moved = !down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4;
+  down = null;
+  if (moved) return;
+  const p = hit(e);
+  if (!p) return;
+  const cell = p.userData.cell;
+  S.regions ??= {};
+  if (selected) S.regions[String(cell.index)] = selected; else delete S.regions[String(cell.index)];
+  repaint(cell, selected);
+  status(); save();
+});
+renderer.domElement.addEventListener('pointermove', e => {
+  const p = hit(e);
+  if (hovered && hovered !== p) hovered.material.opacity = 0;
+  hovered = p;
+  if (p) p.material.opacity = 0.12;
+  renderer.domElement.style.cursor = p ? 'pointer' : 'default';
+});
+
+/* ------------------------------------------------------------------ *
+ *  Старт
+ * ------------------------------------------------------------------ */
+function resize() {
+  const w = Math.max(320, innerWidth - PANEL), h = innerHeight;
+  renderer.setSize(w, h); composer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.domElement.style.left = PANEL + 'px';
+}
+addEventListener('resize', resize);
+resize();
+
+traceArt();
+buildMaterials();
+renderer.toneMappingExposure = S.scene?.exposure ?? 0.8;
+bloom.strength = S.scene?.bloom ?? 0.2;
+build();
+buildPanel();
 
 const clock = new THREE.Clock();
-const FIXED_T = q.get('t');
-const spin = spec.scene?.spin ?? 0.55;
+const FIXED = q.get('t');
 function tick() {
-  const t = FIXED_T !== null ? parseFloat(FIXED_T) : clock.getElapsedTime();
-  pivot.rotation.y = t * spin;
-  pivot.rotation.x = Math.sin(t * 0.7) * 0.11;
-  pivot.position.y = Math.sin(t * 0.9) * 0.05;
+  const dt = clock.getDelta();
+  const spin = S.scene?.spin ?? 0.55;
+  if (FIXED !== null) {
+    const t = parseFloat(FIXED);
+    angle = t * spin; pivot.rotation.x = Math.sin(t * 0.7) * 0.11;
+  } else if (spinning) {
+    angle += dt * spin; pivot.rotation.x = Math.sin(clock.elapsedTime * 0.7) * 0.11;
+  }
+  pivot.rotation.y = angle;
   controls.update();
   composer.render();
   requestAnimationFrame(tick);
 }
 tick();
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  composer.setSize(innerWidth, innerHeight);
-});
 </script>
 </body>
 </html>
