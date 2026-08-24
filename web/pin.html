@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Значок</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body.bg { background: #0a0d0b; }
+  canvas { display: block; }
+  #err { position: fixed; inset: 0; display: grid; place-items: center;
+    font: 12px ui-monospace, Menlo, monospace; color: #ff6b6b; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/lib/three/build/three.module.js",
+    "three/addons/": "/lib/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { enamelGeometry } from './lib/enamel.js';
+import { setupLook } from './lib/look.js';
+
+/* Показ запечённых контуров.
+   Растр, заливка, обход границ и булевы операции остались в редакторе —
+   сюда приезжают готовые многоугольники, и здесь только триангуляция и
+   выдавливание. Ни Clipper, ни lib/trace.js не подключены намеренно. */
+const q = new URLSearchParams(location.search);
+const name = q.get('p') || 'toucan';
+const swing = +(q.get('swing') ?? 38);
+const period = +(q.get('period') ?? 4);
+if (q.has('bg')) document.body.classList.add('bg');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: !q.has('bg') });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setClearAlpha(q.has('bg') ? 1 : 0);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+setupLook(renderer, scene, { exposure: +(q.get('exposure') ?? 0.8) });
+const pivot = new THREE.Group();
+scene.add(pivot);
+
+const fail = m => { const d = document.createElement('div'); d.id = 'err'; d.textContent = m; document.body.append(d); };
+
+const V = ([x, y]) => new THREE.Vector2(x, y);
+const shapeOf = rings => {
+  const s = new THREE.Shape(rings[0].map(V));
+  for (let i = 1; i < rings.length; i++) s.holes.push(new THREE.Path(rings[i].map(V)));
+  return s;
+};
+const toPoly = rings => ({ outer: rings[0].map(([x, y]) => ({ x, y })),
+                           holes: rings.slice(1).map(h => h.map(([x, y]) => ({ x, y }))) });
+
+const t0 = performance.now();
+const d = await fetch(`./dist/${name}-contours.json`).then(r => r.ok ? r.json() : fail('нет контуров')).catch(() => fail('нет контуров'));
+
+const metal = new THREE.MeshPhysicalMaterial({
+  color: new THREE.Color(d.metal?.color ?? '#e7b189'), metalness: 1,
+  roughness: d.metal?.roughness ?? 0.24, envMapIntensity: d.metal?.envMapIntensity ?? 1.1 });
+const mats = {};
+for (const [id, e] of Object.entries(d.enamels || {}))
+  mats[id] = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(e.color), metalness: 0, roughness: e.roughness ?? 0.2,
+    clearcoat: e.clearcoat ?? 1, clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
+    emissive: new THREE.Color(e.emissive ?? '#000000'),
+    emissiveIntensity: e.emissiveIntensity ?? 0, envMapIntensity: e.envMapIntensity ?? 1 });
+
+const badge = new THREE.Group();
+pivot.add(badge);
+
+function solid(rings, zA, zB, bevel, mat) {
+  const bt = Math.min(bevel, (zB - zA) / 2 - 0.002);
+  const geo = new THREE.ExtrudeGeometry(shapeOf(rings), {
+    depth: (zB - zA) - bt * 2, bevelEnabled: true, bevelThickness: bt,
+    bevelSize: bevel, bevelOffset: 0, bevelSegments: 3, curveSegments: 1 });
+  geo.translate(0, 0, zA + bt);
+  badge.add(new THREE.Mesh(geo, mat));
+}
+
+for (const p of d.plate) solid(p, 0, d.z.base, d.bevel.plate, metal);
+for (const p of d.fence) solid(p, d.z.base, d.z.top, d.bevel.fence, metal);
+for (const f of d.fills) {
+  const mat = mats[f.paint];
+  if (!mat) continue;
+  badge.add(new THREE.Mesh(enamelGeometry(toPoly(f.poly),
+    { zBottom: d.z.base, zFloor: d.z.fill, zEdge: d.z.edge },
+    { w: f.w, scale: f.scale, bands: f.bands.map(b => b.map(toPoly)) }), mat));
+}
+
+const box = new THREE.Box3().setFromObject(badge);
+const size = new THREE.Vector3(), mid = new THREE.Vector3();
+box.getSize(size); box.getCenter(mid);
+badge.position.sub(mid);
+console.log(`собрано за ${Math.round(performance.now() - t0)} мс`);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+camera.position.set(0, 0, Math.max(size.x / camera.aspect, size.y) / (2 * Math.tan(Math.PI * 35 / 360)) * 1.2);
+
+let controls = null;
+if (q.get('orbit') !== '0') {
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.enablePan = false;
+}
+
+const clock = new THREE.Clock();
+const FIXED = q.get('t');
+(function tick() {
+  const t = FIXED !== null ? parseFloat(FIXED) : clock.getElapsedTime();
+  pivot.rotation.y = THREE.MathUtils.degToRad(swing) * Math.sin(t * 2 * Math.PI / period);
+  controls?.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

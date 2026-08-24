@@ -1,25 +1,12 @@
 /* Булевы операции и эквидистанта над полигонами. Обёртка над Clipper.
    Полигон здесь — {outer: [{x,y}...], holes: [[{x,y}...]]}. */
 import ClipperLib from './clipper/clipper.module.js';
+import { area, orient, centroid } from './poly.js';
+export { area, orient, centroid };
 
 const K = 100000;
 const toPath = ring => ring.map(p => ({ X: Math.round(p.x * K), Y: Math.round(p.y * K) }));
 const fromPath = path => path.map(p => ({ x: p.X / K, y: p.Y / K }));
-
-export function area(ring) {
-  let a = 0;
-  for (let i = 0; i < ring.length; i++) {
-    const p = ring[i], q = ring[(i + 1) % ring.length];
-    a += p.x * q.y - q.x * p.y;
-  }
-  return a / 2;
-}
-
-/* Внешние кольца против часовой, дырки по часовой — этого ждёт Clipper. */
-export function orient(poly) {
-  const fix = (ring, wantCCW) => (area(ring) < 0) === wantCCW ? ring.slice().reverse() : ring;
-  return { outer: fix(poly.outer, true), holes: (poly.holes || []).map(h => fix(h, false)) };
-}
 
 const pathsOf = polys => polys.flatMap(p => { const o = orient(p); return [toPath(o.outer), ...o.holes.map(toPath)]; });
 
@@ -61,13 +48,25 @@ export function offset(polys, delta, round = true) {
   return fromTree(tree);
 }
 
+/* План мениска: эффективная ширина подъёма и кольца от края внутрь.
+   Считается один раз при запекании — в отрисовке Clipper уже не нужен. */
+export function meniscusPlan(poly, width, steps) {
+  let w = width, inner = offset([poly], -w);
+  for (let i = 0; i < 8 && !inner.length && w > 1e-4; i++) { w *= 0.5; inner = offset([poly], -w); }
+  if (!inner.length) return { w: 0, scale: 0, bands: [[poly]] };
+  const bands = [];
+  let prev = [poly];
+  for (let i = 1; i <= steps; i++) {
+    const next = offset([poly], -i * w / steps);
+    bands.push(next.length ? subtract(prev, next) : prev);
+    if (!next.length) return { w, scale: w / width, bands };
+    prev = next;
+  }
+  bands.push(prev);
+  return { w, scale: w / width, bands };
+}
+
 export function inside(pt, ring) {
   return ClipperLib.Clipper.PointInPolygon(
     { X: Math.round(pt.x * K), Y: Math.round(pt.y * K) }, toPath(ring)) !== 0;
 }
-
-export const centroid = ring => {
-  let x = 0, y = 0;
-  for (const p of ring) { x += p.x; y += p.y; }
-  return { x: x / ring.length, y: y / ring.length };
-};

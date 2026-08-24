@@ -297,10 +297,11 @@ const shapeOf = p => {
   return s;
 };
 
-let cells = [], picks = [], P = null;
+let cells = [], picks = [], P = null, LAST = null;
 
-const enamelMesh = (poly, mat) => new THREE.Mesh(enamelGeometry(poly, {
-  zBottom: P.zBase, zFloor: P.zFill, zEdge: P.zEdge, width: P.men.width, steps: P.men.steps }), mat);
+const enamelMesh = (poly, mat, plan) => new THREE.Mesh(enamelGeometry(poly,
+  { zBottom: P.zBase, zFloor: P.zFill, zEdge: P.zEdge },
+  plan ?? C.meniscusPlan(poly, P.men.width, P.men.steps)), mat);
 
 function fillOf(cell, paint) {
   const mat = enamelMats[paint];
@@ -359,8 +360,11 @@ function build() {
   });
 
   // ограждение: вся вырубка минус ячейки и минус полоса канта
-  for (const f of C.subtract(outline, [...cells.map(c => c.piece), ...ring]))
-    solid(f, zBase, zTop, R.bevel.fence, metalMat);
+  const fence = C.subtract(outline, [...cells.map(c => c.piece), ...ring]);
+  for (const f of fence) solid(f, zBase, zTop, R.bevel.fence, metalMat);
+
+  LAST = { z: { base: zBase, top: zTop, fill: zFill, edge: zEdge },
+           men, tuck: R.tuck, bevel: R.bevel, plate: outline, ring, fence };
 
   for (const c of cells) {
     c.mesh = fillOf(c, (S.regions || {})[String(c.index)] ?? null);
@@ -628,6 +632,30 @@ if (BAKE) {
     painted: cells.filter(c => c.mesh).length,
     /* Геометрия целиком, вместе с материалами. Свет и окружение в glTF не
        уезжают — вьюер поднимает их сам тем же lib/look.js. */
+    /* Контуры вместо сетки: тяжёлое и капризное (растр, заливка, обход
+       границ, булевы операции) посчитано здесь, клиенту остаётся
+       триангулировать и выдавить. rings=true кладёт ещё и кольца мениска —
+       тогда клиенту не нужен и Clipper, но данных заметно больше. */
+    contours: () => {
+      const r = v => Math.round(v * 1000) / 1000;
+      const poly = p => [p.outer.map(v => [r(v.x), r(v.y)]), ...p.holes.map(h => h.map(v => [r(v.x), r(v.y)]))];
+      const plan = p => {
+        const pl = C.meniscusPlan(p, P.men.width, P.men.steps);
+        return { w: r(pl.w), scale: r(pl.scale), bands: pl.bands.map(b => b.map(poly)) };
+      };
+      const fills = [];
+      for (const p of LAST.ring) fills.push({ paint: S.band?.enamel, poly: poly(p), ...plan(p) });
+      for (const c of cells) {
+        const paint = (S.regions || {})[String(c.index)] ?? null;
+        if (!paint) continue;
+        const grown = C.offset([c.piece], LAST.tuck)[0] ?? c.piece;
+        fills.push({ paint, poly: poly(grown), ...plan(grown) });
+      }
+      return JSON.stringify({
+        z: LAST.z, bevel: LAST.bevel, metal: S.metal, enamels: S.enamels,
+        plate: LAST.plate.map(poly), fence: LAST.fence.map(poly), fills
+      });
+    },
     stats: () => {
       const by = {};
       badge.traverse(o => { if (!o.geometry) return;
