@@ -16,7 +16,9 @@
     "tuck": 0.006,
     "//minWall": "гарантированная металлическая стенка между эмалью и кантом",
     "minWall": 0.010,
-    "bevel": { "plate": 0.012, "fence": 0.004, "enamel": 0.004 }
+    "bevel": { "plate": 0.012, "fence": 0.004, "enamel": 0.004 },
+    "//meniscus": "rise: 0 — эмаль плоская, 1 — у стенки вровень с верхом канта",
+    "meniscus": { "rise": 0.8, "width": 0.05, "steps": 5 }
   },
 
   "band": { "inset": 0.010, "width": 0.030, "enamel": "cream" },
