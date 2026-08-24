@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Награда</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #07090a; overflow: hidden; }
+  canvas { display: block; }
+  #hint, #err {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: .16em; text-transform: uppercase; pointer-events: none; user-select: none;
+  }
+  #hint { bottom: 18px; color: #4d7a44; }
+  #err  { top: 40%; color: #ff6b6b; text-transform: none; letter-spacing: 0; max-width: 70ch;
+          white-space: pre-wrap; line-height: 1.6; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/lib/three/build/three.module.js",
+    "three/addons/": "/lib/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hint">перетащите, чтобы осмотреть · колесо — приблизить</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { extract } from './lib/trace.js';
+import * as C from './lib/clip.js';
+
+const q = new URLSearchParams(location.search);
+const fail = msg => { const d = document.createElement('div'); d.id = 'err'; d.textContent = msg; document.body.append(d); throw new Error(msg); };
+
+/* ------------------------------------------------------------------ *
+ *  Данные значка: картинка-раскраска + параметры
+ * ------------------------------------------------------------------ */
+const name = q.get('b') || 'toucan';
+const spec = await fetch(`./badges/${name}.json`).then(r => r.ok ? r.json() : fail(`нет ./badges/${name}.json`));
+
+const img = new Image();
+img.src = `./badges/${spec.art}`;
+await img.decode().catch(() => fail(`не читается ./badges/${spec.art}`));
+
+const tr = { threshold: 150, minArea: 120, tolerance: 1.2, smoothing: 2, maxSize: 1100, ...(spec.trace || {}) };
+const k = Math.min(1, tr.maxSize / Math.max(img.width, img.height));
+const cw = Math.round(img.width * k), ch = Math.round(img.height * k);
+const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+const g2 = cv.getContext('2d', { willReadFrequently: true });
+g2.fillStyle = '#fff'; g2.fillRect(0, 0, cw, ch);
+g2.drawImage(img, 0, 0, cw, ch);
+
+const art = extract(g2.getImageData(0, 0, cw, ch), tr);
+if (!art.silhouette) fail('не удалось найти силуэт — картинка целиком фон?');
+
+/* пиксели -> сцена: центрируем и разворачиваем ось Y */
+const xs = art.silhouette.outer.map(p => p[0]), ys = art.silhouette.outer.map(p => p[1]);
+const bx0 = Math.min(...xs), bx1 = Math.max(...xs);
+const by0 = Math.min(...ys), by1 = Math.max(...ys);
+const S = (spec.scale?.width ?? 2.4) / (bx1 - bx0);
+const mx = (bx0 + bx1) / 2, my = (by0 + by1) / 2;
+const T = ring => ring.map(([x, y]) => ({ x: (x - mx) * S, y: (my - y) * S }));
+const poly = s => ({ outer: T(s.outer), holes: s.holes.map(T) });
+
+const silhouette = [poly(art.silhouette)];
+const regions = art.regions.map(poly);
+
+/* ------------------------------------------------------------------ *
+ *  Сцена
+ * ------------------------------------------------------------------ */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = spec.scene?.exposure ?? 0.8;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.enablePan = false;
+controls.minDistance = 3; controls.maxDistance = 20;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const key  = new THREE.DirectionalLight(0xfff1dd, 1.0); key.position.set(3.5, 4.5, 5);
+const rim  = new THREE.DirectionalLight(0x9dff6a, 0.8); rim.position.set(-4.5, 1.5, -3);
+const fill = new THREE.DirectionalLight(0xbdd8ff, 0.45); fill.position.set(-2.5, -3, 4);
+scene.add(key, rim, fill);
+
+function makeBackdrop() {
+  const W = 2048, H = 1024;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.fillStyle = '#0a0d0b'; x.fillRect(0, 0, W, H);
+  const step = 64;
+  x.lineWidth = 1; x.strokeStyle = 'rgba(80,200,90,0.10)'; x.beginPath();
+  for (let i = 0; i <= W; i += step) { x.moveTo(i + .5, 0); x.lineTo(i + .5, H); }
+  for (let j = 0; j <= H; j += step) { x.moveTo(0, j + .5); x.lineTo(W, j + .5); }
+  x.stroke();
+  x.lineWidth = 1.5; x.strokeStyle = 'rgba(80,200,90,0.20)'; x.beginPath();
+  for (let i = 0; i <= W; i += step * 4) { x.moveTo(i + .5, 0); x.lineTo(i + .5, H); }
+  for (let j = 0; j <= H; j += step * 4) { x.moveTo(0, j + .5); x.lineTo(W, j + .5); }
+  x.stroke();
+  const gr = x.createRadialGradient(W / 2, H / 2, H * .12, W / 2, H / 2, H * .78);
+  gr.addColorStop(0, 'rgba(10,13,11,0)'); gr.addColorStop(1, 'rgba(4,6,5,0.96)');
+  x.fillStyle = gr; x.fillRect(0, 0, W, H);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(64, 32),
+  new THREE.MeshBasicMaterial({ map: makeBackdrop() }));
+backdrop.position.z = -9;
+scene.add(backdrop);
+
+/* ------------------------------------------------------------------ *
+ *  Материалы из spec
+ * ------------------------------------------------------------------ */
+const metalMat = new THREE.MeshPhysicalMaterial({
+  color: new THREE.Color(spec.metal?.color ?? '#e7b189'),
+  metalness: 1,
+  roughness: spec.metal?.roughness ?? 0.24,
+  envMapIntensity: spec.metal?.envMapIntensity ?? 1.1
+});
+const enamelMats = {};
+for (const [id, e] of Object.entries(spec.enamels || {})) {
+  enamelMats[id] = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(e.color),
+    metalness: 0,
+    roughness: e.roughness ?? 0.2,
+    clearcoat: e.clearcoat ?? 1,
+    clearcoatRoughness: e.clearcoatRoughness ?? 0.06,
+    emissive: new THREE.Color(e.emissive ?? '#000000'),
+    emissiveIntensity: e.emissiveIntensity ?? 0,
+    envMapIntensity: e.envMapIntensity ?? 1
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ *  Три слоя: пластина -> эмаль -> приподнятое металлическое ограждение
+ * ------------------------------------------------------------------ */
+const R = { plate: 0.10, fence: 0.105, enamelDepth: 0.037, tuck: 0.013, minWall: 0.022,
+            bevel: { plate: 0.02, fence: 0.012, enamel: 0.006 }, ...(spec.relief || {}) };
+const Z_BASE = R.plate, Z_TOP = R.plate + R.fence, Z_FILL = Z_TOP - R.enamelDepth;
+
+const badge = new THREE.Group();
+const pivot = new THREE.Group();
+pivot.add(badge);
+scene.add(pivot);
+
+const shapeOf = p => {
+  const s = new THREE.Shape(p.outer.map(v => new THREE.Vector2(v.x, v.y)));
+  for (const h of p.holes) s.holes.push(new THREE.Path(h.map(v => new THREE.Vector2(v.x, v.y))));
+  return s;
+};
+function solid(p, zA, zB, bevel, mat) {
+  const bt = Math.min(bevel, (zB - zA) / 2 - 0.002);
+  const geo = new THREE.ExtrudeGeometry(shapeOf(p), {
+    depth: (zB - zA) - bt * 2, bevelEnabled: true, bevelThickness: bt,
+    bevelSize: bevel, bevelOffset: 0, bevelSegments: 3, curveSegments: 1
+  });
+  geo.translate(0, 0, zA + bt);
+  badge.add(new THREE.Mesh(geo, mat));
+}
+
+/* пластина по внешнему контуру */
+for (const p of silhouette) solid(p, 0, Z_BASE, R.bevel.plate, metalMat);
+
+/* кант вокруг всего — эквидистанта внешнего контура */
+const band = spec.band;
+let field = silhouette;
+if (band && band.width > 0) {
+  const a = C.offset(silhouette, -band.inset);
+  const b = C.offset(silhouette, -(band.inset + band.width));
+  for (const p of C.subtract(a, b)) solid(p, Z_BASE, Z_FILL, R.bevel.enamel, enamelMats[band.enamel] ?? metalMat);
+  field = b;
+}
+
+/* области, обрезанные полем и отодвинутые от его края на стенку */
+const inner = C.offset(field, -R.minWall);
+const cells = [];
+regions.forEach((r, i) => {
+  const paint = (spec.regions || {})[String(i)] ?? spec.default ?? null;
+  for (const piece of C.intersect([r], inner)) cells.push({ piece, paint, i });
+});
+
+/* Ограждение — это поле минус все ячейки. Разность считает Clipper:
+   он сам разложит результат на контуры с дырками и на островки внутри
+   дырок (зрачок), так что вручную решать, что куда вложено, не нужно. */
+for (const f of C.subtract(field, cells.map(c => c.piece)))
+  solid(f, Z_BASE, Z_TOP, R.bevel.fence, metalMat);
+
+/* эмаль — шире проёма на tuck, уходит под стенку */
+let painted = 0;
+for (const c of cells) {
+  const mat = enamelMats[c.paint];
+  if (!mat) continue;
+  for (const grown of C.offset([c.piece], R.tuck)) solid(grown, Z_BASE, Z_FILL, R.bevel.enamel, mat);
+  painted++;
+}
+
+console.log(`${name}: областей ${regions.length}, в поле ${cells.length}, залито ${painted}, ` +
+            `мелких отброшено ${art.dropped}`);
+
+/* центрируем и ставим камеру по габариту */
+const box = new THREE.Box3().setFromObject(badge);
+const size = new THREE.Vector3(), mid = new THREE.Vector3();
+box.getSize(size); box.getCenter(mid);
+badge.position.set(-mid.x, -mid.y, 0);
+camera.position.set(0, 0, Math.max(size.x / camera.aspect, size.y) / (2 * Math.tan(Math.PI * 35 / 360)) * 1.25);
+
+/* ------------------------------------------------------------------ *
+ *  Постобработка и анимация
+ * ------------------------------------------------------------------ */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight),
+  spec.scene?.bloom ?? 0.20, 0.4, 1.0));
+composer.addPass(new OutputPass());
+
+const clock = new THREE.Clock();
+const FIXED_T = q.get('t');
+const spin = spec.scene?.spin ?? 0.55;
+function tick() {
+  const t = FIXED_T !== null ? parseFloat(FIXED_T) : clock.getElapsedTime();
+  pivot.rotation.y = t * spin;
+  pivot.rotation.x = Math.sin(t * 0.7) * 0.11;
+  pivot.position.y = Math.sin(t * 0.9) * 0.05;
+  controls.update();
+  composer.render();
+  requestAnimationFrame(tick);
+}
+tick();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

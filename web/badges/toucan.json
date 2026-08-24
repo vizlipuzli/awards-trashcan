@@ -1,0 +1,53 @@
+{
+  "name": "Тукан",
+  "art": "toucan.jpg",
+
+  "//trace": "порог чёрного, минимальная площадь области в пикселях, упрощение и сглаживание контура",
+  "trace": { "threshold": 150, "minArea": 120, "tolerance": 1.2, "smoothing": 2, "maxSize": 1100 },
+
+  "scale": { "width": 2.6 },
+
+  "metal": { "color": "#f2c069", "roughness": 0.22, "envMapIntensity": 1.2 },
+
+  "relief": {
+    "plate": 0.10,
+    "fence": 0.105,
+    "enamelDepth": 0.037,
+    "tuck": 0.006,
+    "//minWall": "гарантированная металлическая стенка между эмалью и кантом",
+    "minWall": 0.010,
+    "bevel": { "plate": 0.012, "fence": 0.004, "enamel": 0.004 }
+  },
+
+  "band": { "inset": 0.010, "width": 0.030, "enamel": "cream" },
+
+  "enamels": {
+    "black":  { "color": "#0c0e07", "roughness": 0.5, "clearcoat": 0.22, "clearcoatRoughness": 0.3, "envMapIntensity": 0.12 },
+    "cream":  { "color": "#f4ead6", "roughness": 0.16, "clearcoat": 1, "clearcoatRoughness": 0.05, "envMapIntensity": 0.9 },
+    "orange": { "color": "#ff8a15", "roughness": 0.18, "clearcoat": 1 },
+    "red":    { "color": "#e0361f", "roughness": 0.2, "clearcoat": 1 },
+    "sky":    { "color": "#37c8f0", "roughness": 0.18, "clearcoat": 1 },
+    "green":  { "color": "#63f01c", "roughness": 0.2, "clearcoat": 1, "emissive": "#2f9c0b", "emissiveIntensity": 0.12 },
+    "wood":   { "color": "#7a4a22", "roughness": 0.35, "clearcoat": 0.6 }
+  },
+
+  "//regions": "номер области -> эмаль. Номера идут по убыванию площади, см. консоль. Область без записи остаётся металлом",
+  "regions": {
+    "0": "black",
+    "1": "orange",
+    "2": "cream",
+    "3": "black",
+    "4": "black",
+    "5": "cream",
+    "6": "red",
+    "7": "wood",
+    "8": "black",
+    "9": "wood",
+    "10": "sky",
+    "11": "black"
+  },
+
+  "default": null,
+
+  "scene": { "exposure": 0.82, "bloom": 0.18, "spin": 0.5 }
+}
